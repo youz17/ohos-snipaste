@@ -158,6 +158,25 @@ ref anchor(2,0) | cur anchor(685,77) | offset(-683,-77)
 也就是说 `excludeFromDock` 是唯一的官方开关，但在这台设备（HAD-W32 / HarmonyOS 7.0.0.23 / API 26）上不生效。
 配置保留在 `module.json5` 里（语义正确、无副作用，换新版本系统可能就生效了）。
 
+### 顺带查证：全局快捷键（结论：平台不支持）
+
+既然任务栏图标去不掉，退一步想用"按一下快捷键就截图"。逐条查证：
+
+| 检查 | 结果 |
+| --- | --- |
+| `inputConsumer.on('hotkeyChange')` 注册 | 注册**成功且无需权限**（日志 `InputManagerImpl: SubscribeHotkey` + `hotkey registered: Ctrl+Shift+A`），但按下**不触发回调**：应用在前台时按键被当普通按键派发给窗口（`WMSEvent: DispatchKeyEvent ret:51`），退到后台（`ohsnipaste0` ZOrd 变 `-1`）后日志里连按键都没有 ❌ |
+| 该 API 的文档含义 | `@ohos.multimodalInput.inputConsumer.d.ts`：*"Subscribes to application shortcut key **change** events"* —— 是"应用快捷键配置变更"通知，不是按键订阅 |
+| `inputConsumer.on('keyPressed')`（API 16） | 文档：*"If the current application is in the **foreground focus window**, a callback is triggered"* → 只前台 ❌ |
+| launcher 快捷方式 schema `toolchains/modulecheck/shortcuts.json` | 只允许 `shortcutId / label / icon / visible / wants`，**没有键位字段** ❌ |
+| `inputConsumer.getAllSystemHotkeys()` | 可读，返回 **81** 条，全是系统窗口管理绑定（Win+方向键、Ctrl+Shift+Esc、Alt+F10…），应用只读 ❌ |
+| 设置应用 | 无任何快捷键页面（`bm dump com.huawei.hmos.settings` 只有键鼠共享/恢复密钥） ❌ |
+
+结论：不是缺权限，是平台**没有暴露**第三方全局快捷键。相关探测代码已删除，只留下把入口流程抽成
+`common/CaptureFlow.ets` 的重构（页面与今后任何触发方式共用）。
+
+> 更正：本文件早前把"`inputConsumer` 零权限全局快捷键"列为候选，依据的是已从该 SDK 移除的
+> 老接口 `on('key')`，属于未查证就下的判断，现作废。
+
 ## 第三轮反馈（3 项）
 
 

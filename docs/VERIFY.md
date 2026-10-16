@@ -69,6 +69,18 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
 4. **干净卸载会重置 user_grant 权限**。`hdc uninstall` + 重装后 `CUSTOM_SCREEN_CAPTURE` 变回未授权，
    应用会卡在授权弹窗上（此时 `hidumper` 里只有 Entry 窗口、没有选区/贴图窗口，是典型症状）。
 
+## 判断"平台能不能做"的三板斧
+
+1. **读 API 定义**：`ets\api\@ohos.*.d.ts` 里的 `@permission`、`@since`、以及那句人话描述
+   （例：`on('keyPressed')` 的 *"If the current application is in the foreground focus window…"*）。
+2. **读 schema**：`toolchains\modulecheck\*.json` 决定 manifest/资源文件能写什么字段
+   （例：`shortcuts.json` 只有 `shortcutId/label/icon/visible/wants`，所以快捷方式带不了键位）。
+3. **真机实测**：注册 + 注入事件 + 看日志里"谁收到了"。
+   例：判断全局快捷键 → 注册成功（`SubscribeHotkey`）≠ 能用；注入 `Ctrl+Shift+A` 后
+   前台是 `WMSEvent: DispatchKeyEvent`（被当普通按键），后台则毫无日志 → 不可用。
+
+第 3 步必须有，第 1、2 步只能给"大概行不行"。
+
 ## 典型验证序列
 
 ```powershell

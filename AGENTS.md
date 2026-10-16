@@ -43,6 +43,8 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
 - 图片比较的基点（第一个非背景像素）在框选位置变化后会失准。
 - 应用运行时任务栏必然有一个图标：`excludeFromDock: true` 已加但实测无效，第三方也无法往
   时间/输入法那排（状态栏托盘）放图标。
+- 第三方做不了全局快捷键：`inputConsumer.on('hotkeyChange')` 注册成功但按键不回调（它是"配置变更"
+  通知），`on('keyPressed')` 文档限定前台；系统快捷键表只读、`shortcuts.json` 无键位字段。
 
 各条的实测证据与候选方案见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
