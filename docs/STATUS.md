@@ -27,23 +27,24 @@
 | 贴图窗口 | ✅ | `pin window 1200x700 for image 1200x700`；无边框、可拖动、右键菜单可用 |
 | 复制 / 保存 | ✅ | `ImageShare: copied to clipboard`；保存弹系统对话框、默认名 `snipaste_20261016_124328.png` |
 | 比较 | ✅ | 同区域 `差异 0 px / 400000 px (0.00%)`；时钟区域 `差异 179 px / 27000 px (0.66%) · 区域 15×21 @(282,18)` |
-| 首次启动不截图 | ✅ | 引导只注册托盘与拉起常驻进程，不截图；截图统一由托盘面板的 `action=capture` 触发 |
-| 状态栏托盘入口 | ✅ | `TrayEntry: tray icon registered`；折叠区出现线稿图标，点它 → `StartUIExtension: pages/TrayPanel`；面板内「开始截图」→ `TrayAbility: capture requested -> CaptureFlow` → `CaptureFlow: main window hidden` → `SelectionPage ... shot_*.png`；「退出」→ `tray icon removed` → `KillApplicationSelf` → `pidof` 为空、窗口全清 |
+| 首次启动不截图 | ✅ | 引导只注册托盘与拉起常驻进程，不截图；截图统一由托盘面板的「开始截图」（公共事件）触发 |
+| 状态栏托盘入口 | ✅ | `TrayEntry: tray icon registered`；折叠区出现线稿图标，点它 → `StartUIExtension: pages/TrayPanel`；面板内「开始截图」→ `CaptureSignal: capture signal published` → `TrayAbility: capture signal received` → 504ms 后 `CUSTOM_SCREEN_CAPTURE already granted` → `capture ok` → `SelectionPage ... shot_*.png`；「退出」→ `tray icon removed` → `KillApplicationSelf` → `pidof` 为空、窗口全清 |
 | 应用无窗口常驻 | ✅ | 引导后 `ProcessMgr: Terminate last` 只终结主进程，挂载进程 `...:entry:TrayAbility:0` 仍在；`hidumper -s WindowManagerService` 查不到任何 `ohsnipaste` 窗口；任务栏裁剪区里我们的图标消失（只剩 WPS） |
-| 托盘面板截图不带面板 | ⚠️ | 不等就直接截时冻结图里带面板（面板区"压暗蓝按钮"像素 50257）；现行靠 `TrayAbility` 触发后等 500ms，**是否足够未复核**（驱动点击时托盘图标位置会漂，自动复核未跑通） |
+| 截图全程不进任务栏 | ✅ | 面板触发截图 → 选区窗口出现 → Esc 关掉，三个时刻截同一块任务栏裁剪区都只有 WPS；日志里 `refreshSCBSceneContainerSession : add` 只出现 `SelectionAbility`，没有 `TrayAbility`（见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 3.1 / 墓地 10） |
+| 托盘面板截图不带面板 | ✅ | 冻结画面里面板区（x 2250-3050 / y 1600-2000）只剩被压暗的桌面，没有面板与蓝按钮；触发到截图间隔 504ms，`PANEL_SETTLE_MS` 真的生效（此前被 `pages/Index.onPageShow` 的立即触发抢跑） |
 
 ## 模块健康度
 
 | 模块 | 位置 | 状态 |
 | --- | --- | --- |
-| 入口编排 | `common/CaptureFlow.ets` | ✅ 静默期 / 去抖 / busy 防重 / pick 降级齐备；⚠️ 截图前 `minimize()` 的顺序待复核（待办 1） |
+| 入口编排 | `common/CaptureFlow.ets` | ✅ 静默期 / 去抖 / busy 防重 / pick 降级齐备；⚠️ 截图前 `minimize()` 的顺序待复核（待办 1）。`hideSelfWindow()` 现在只对着一个不存在的窗口调用（实测不会误伤同应用的贴图窗口：贴图窗口 ZOrd 全程 `113`） |
 | 截图 | `common/ScreenCapturer.ets` | ✅ 无参 `capture()` + `pick()` 降级；带参 `capture()` 这条路已走死 |
 | 选区 | `pages/SelectionPage.ets` + `selectionability/` | ✅ 框选 / 8 把手 / 4× 放大镜 / 方向键 / 5 个操作条动作 |
 | 贴图 | `pages/PastePage.ets` + `pasteability/` | ✅ 1:1 显示、拖动、右键菜单；置顶范围与圆角是平台限制（非缺陷） |
 | 比较 | `common/ImageDiff.ets` + `common/PinRegistry.ets` | ⚠️ 算法按需求实现，基点在框选位置变化后失准（限制，见 SPEC-AND-TRUTH 候选 3） |
 | 分享 | `common/ImageShare.ets` | ✅ 剪贴板 + 系统保存对话框 |
 | 传值 / 落盘 | `common/PinPayload.ets`、`common/PinStore.ets` | ✅ 窗口 id + AppStorage；fd 解码，固定 RGBA_8888 |
-| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayAbility.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、挂载常驻（独立进程）、左键面板（开始截图 / 退出）均真机跑通；⚠️ 面板冷启动约 2.4s；⚠️ 挂载首次调用报 `16000067`，靠有界重试兜住 |
+| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayAbility.ets` + `tray/CaptureSignal.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、挂载常驻（独立进程、无窗口、无页面）、左键面板（开始截图 / 退出）均真机跑通；触发走同应用自定义公共事件；⚠️ 面板冷启动约 2.4s；⚠️ 挂载首次调用报 `16000067`，靠有界重试兜住 |
 | 引导 | `entryability/EntryAbility.ets` | ✅ 注册托盘 → 挂载常驻进程 → 等握手文件 → `terminateSelf`；⚠️ 握手文件用 `fs.accessSync`（返回 boolean，不是抛异常） |
 
 ## 开放待办（做完即删）
@@ -52,14 +53,12 @@
    - 早期实测称"先最小化自身窗口再截图会让应用进后台、`startAbility` 报 `201`"，而现行 `CaptureFlow` 正是
      "申请权限 → `minimize()` → 截图 → `startAbility`"（`common/CaptureFlow.ets`）；本轮改造后这条路径
      已实测跑通（面板触发 → 截图 → 选区窗口出现），但当时那条记录的适用条件仍未查清。
-2. **待复核：托盘面板截图里不该带面板** —— `tray/TrayAbility.ets` 的 `PANEL_SETTLE_MS = 500` 是拍的，
-   只验证过"不等（0ms）会带面板"。复核方法见 [VERIFY.md](VERIFY.md) 第 7 条（注意：托盘图标在折叠区里的
-   位置会随托盘内容漂移，硬编码坐标会点空，每次先截图定位）。
-3. 比较基点稳健化（方案见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 候选 3）—— 需你确认是否偏离最初指定的算法。
-4. 多贴图管理（透明度、滚轮缩放、一键关全部、贴图列表）。
-5. 比较入口 UX（贴图右键菜单「设为比较基准」等）。
-6. `ImageDiff` 单元测试（纯计算，可脱离设备）。
-7. **待确认：暗色模式启动窗口** —— `entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`（`base` 已改 `#01000000`）。暗色模式下引导瞬间可能仍冒出纯黑窗口；未实测。
+2. 比较基点稳健化（方案见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 候选 3）—— 需你确认是否偏离最初指定的算法。
+3. 多贴图管理（透明度、滚轮缩放、一键关全部、贴图列表）。
+4. 比较入口 UX（贴图右键菜单「设为比较基准」等）。
+5. `ImageDiff` 单元测试（纯计算，可脱离设备）。
+6. **待确认：暗色模式启动窗口** —— `entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`（`base` 已改 `#01000000`）。暗色模式下引导瞬间可能仍冒出纯黑窗口；未实测。
+7. **待确认：常驻进程被杀后的自愈** —— 面板触发改成公共事件后，若 `...:entry:TrayAbility:0` 已死而图标还在（例如只有 `:statusBarView` 活着），点「开始截图」会没有任何反应（老写法靠 `startAbility` 顺带重启进程）。未实测这种状态的复现概率与表现。
 
 ## 已知限制（结论与证据在 SPEC-AND-TRUTH，本文不复制）
 

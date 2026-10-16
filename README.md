@@ -54,8 +54,8 @@ hdc shell aa force-stop com.youz.ohsnipaste                                   # 
 ```
 
 冷启动只做引导：注册托盘图标 → 拉起常驻的 `TrayAbility` → 主 Ability 退出，此后应用没有任何窗口。
-截图一律从托盘面板的「开始截图」触发（`action=capture`）。触发链路与静默期/去抖规则见
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+截图一律从托盘面板的「开始截图」触发，它发给常驻进程一个**应用内公共事件**（不是 `startAbility` ——
+那会让应用重新出现在任务栏）。触发链路与静默期/去抖规则见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 日常用法是**状态栏托盘图标**：点右下角折叠区（`^`）里的图标 → 面板 → 「开始截图」；
 「退出」会摘掉图标并结束应用（图标只在应用还有进程活着时存在）。
@@ -87,16 +87,16 @@ entry/src/main/
 │   │   ├── ImageDiff.ets        # 基点对齐 + 逐像素比较 + 差异图
 │   │   ├── ImageShare.ets       # 剪贴板 / 系统保存对话框
 │   │   └── Launcher.ets         # startAbility 统一入口（选区 / 贴图）
-│   ├── entryability/EntryAbility.ets               # 不可见主窗口 + 激活触发点
+│   ├── entryability/EntryAbility.ets               # 引导：注册托盘 + 拉起常驻进程后自己退出
 │   ├── selectionability/SelectionAbility.ets       # 全屏无装饰置顶的选区窗口
 │   ├── pasteability/PasteAbility.ets               # 每张贴图一个无装饰置顶窗口
 │   ├── entrybackupability/EntryBackupAbility.ets   # 系统备份扩展（模板自带）
 │   ├── tray/
 │   │   ├── TrayEntry.ets        # 状态栏托盘图标：注册 addToStatusBar / 摘除 removeFromStatusBar
-│   │   ├── TrayAbility.ets      # 挂在状态栏项上的常驻 Ability（STARTUP_HIDE，截图链路在这里）
+│   │   ├── TrayAbility.ets      # 挂在状态栏项上的常驻 Ability（STARTUP_HIDE、无窗口，截图链路在这里）
+│   │   ├── CaptureSignal.ets    # 面板 → 常驻进程的跨进程触发信号（自定义公共事件）
 │   │   └── TrayStatusBarExt.ets # 托盘左键面板的 statusBarView 扩展
 │   └── pages/
-│       ├── Index.ets            # 空页面（启动窗口要等内容绘制完成才消失）
 │       ├── SelectionPage.ets    # 遮罩 + 框选 + 把手 + 放大镜 + 操作条
 │       ├── PastePage.ets        # 贴图内容 + 拖动 + 右键菜单
 │       └── TrayPanel.ets        # 托盘面板：开始截图 / 退出

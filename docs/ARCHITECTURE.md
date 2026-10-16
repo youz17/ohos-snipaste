@@ -15,24 +15,23 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 
 | Ability / 扩展 | 窗口形态 | 职责 |
 | --- | --- | --- |
-| `EntryAbility` | 主窗口存在但**不可见**（去装饰 + 背景 `#01000000` + 去阴影），且只活到引导结束 | 引导：注册托盘图标 → 拉起 `TrayAbility` → 确认它起来后 `terminateSelf`。之后应用**没有任何窗口**，任务栏也就不占位 |
-| `TrayAbility` | **无可见窗口**：以 `STARTUP_HIDE` 挂到状态栏项上，跑在独立进程 `...:entry:TrayAbility:0` | 常驻载体：托盘图标活在这个进程里；截图链路（`CaptureFlow`）也挂这里 |
+| `EntryAbility` | 只借系统的启动窗口，**不加载任何内容**；引导结束即 `terminateSelf` | 引导：注册托盘图标 → 拉起 `TrayAbility` → 确认它起来后退出。之后应用**没有任何窗口**，任务栏也就不占位 |
+| `TrayAbility` | **没有窗口**：`STARTUP_HIDE` 挂到状态栏项上、**不 `loadContent`**，跑在独立进程 `...:entry:TrayAbility:0` | 常驻载体：托盘图标活在这个进程里；订阅跨进程信号（`tray/CaptureSignal.ets`）跑 `CaptureFlow` |
 | `SelectionAbility` | 全屏、无装饰、去标题按钮，`setWindowLayoutFullScreen` + `maximize()` 之后 `setWindowTopmost(true)`（singleton） | 铺冻结画面，自绘遮罩 / 选区 / 8 个把手 / 放大镜 / 操作条 |
 | `PasteAbility` | 每张图一个窗口，无装饰无阴影、`setWindowTopmost(true)`，尺寸 = 图片像素尺寸（multiton） | 显示贴图或差异图；拖动移动、右键菜单 |
 | `TrayStatusBarExt`（`type: statusBarView`，`exported: true`） | 无独立窗口；左键面板由 sceneboard 承载（页面 `pages/TrayPanel.ets`），跑在独立进程 `:statusBarView` | 托盘图标的左键面板：开始截图 / 退出 |
 
-入口页（`pages/Index.ets`）刻意没有任何界面元素，只有一层近全透明的 `Column`：`EntryAbility` 与
-`TrayAbility` 都必须 `loadContent`（不加载的话系统启动窗口不会消失，见 SPEC-AND-TRUTH 2.7），
-但用户全程只看到选区窗口和贴图窗口。
+入口页（`pages/Index.ets`）已删除：两个 Ability 都不需要承载内容 —— `EntryAbility` 引导完就退出，
+`TrayAbility` 是 `STARTUP_HIDE` 挂载且永不显示窗口的常驻进程。用户全程只看到选区窗口和贴图窗口。
 
 ## 触发链路
 
-三个入口都调 `CaptureFlow.run()`，由它自己判断该不该跑：
+只有一个入口：托盘面板的「开始截图」→ **跨进程信号**（`commonEventManager` 自定义事件，
+`tray/CaptureSignal.ets`）→ 常驻进程 `TrayAbility` 的订阅回调 → `CaptureFlow.run()`。
 
-| 入口 | 何时 |
-| --- | --- |
-| `TrayAbility.onCreate` / `onNewWant` | 托盘面板的「开始截图」→ `startAbility(TrayAbility, {action:'capture'})`，带 `action` 才截，引导启动不带 |
-| `EntryAbility.onCreate` | 冷启动只做引导，不截图 |
+信号而不是 `startAbility`：**任何** ability 启动都会把常驻 Ability 的场景容器重新激活成前台，
+应用立刻在任务栏冒出一个带运行点的图标，而且窗口再隐藏它也不消失（`STARTUP_HIDE` 与
+`ProcessMode.ATTACH_TO_STATUS_BAR_ITEM` 都拦不住，实测）。因此引导之后**再也不启动 any ability**。
 
 ```
 CaptureFlow.run(ctx)
@@ -40,7 +39,7 @@ CaptureFlow.run(ctx)
   │             或 距上次 < 1.5s
   │             或 busy（正在跑）
   ├─ ScreenCapturer.ensurePermission   先 checkAccessTokenSync 查已有授权，未授权才弹窗
-  ├─ hideSelfWindow()                  win.minimize()，把窗口收走（TrayAbility 的窗口本来就是隐藏的）
+  ├─ hideSelfWindow()                  win.minimize()，兜底收走自身窗口（本 Ability 没有窗口）
   ├─ ScreenCapturer.captureScreen()    无参 screenshot.capture() → 3120x2080 PixelMap
   ├─ PinStore.saveAsPng(pm, filesDir, 'shot')   → files/shot_<ts>.png
   ├─ Launcher.openSelection(path, w, h)         → startAbility(SelectionAbility)
@@ -50,6 +49,9 @@ CaptureFlow.run(ctx)
 
 顺序有硬约束：**必须先申请权限再收窗口** —— 反过来的话应用已进后台，权限请求会被直接拒掉
 （权限申请与窗口状态的交互记录见 SPEC-AND-TRUTH 1.4）。
+
+面板按「开始截图」到真正截图之间有 `PANEL_SETTLE_MS = 500`（`tray/TrayAbility.ets`）：面板是
+sceneboard 的窗口，要等它收走才不会进冻结画面。
 
 ## 状态栏托盘入口
 
@@ -66,10 +68,11 @@ CaptureFlow.run(ctx)
   → 轮询 files/tray-ready（TrayAbility 窗口起来后落下的握手文件）
   → terminateSelf()      主窗口随之消失；此时 AMS 才认账，不会把应用当"最后一个 ability 退出"而杀掉
 
-运行期
+运行期（`startAbility` 只出现在引导里，运行期一次都没有）
   左键点图标 → sceneboard 拉起 TrayStatusBarExt（独立进程 com.youz.ohsnipaste:statusBarView）
     └─ onSessionCreate → session.loadContent('pages/TrayPanel')
-         ├─ 开始截图 → startAbility(TrayAbility, {action:'capture'}) → onNewWant → CaptureFlow
+         ├─ 开始截图 → publish('com.youz.ohsnipaste.action.CAPTURE')
+         │              → 常驻进程 CaptureSignal 订阅回调 → TrayAbility.capture() → CaptureFlow
          └─ 退出     → removeFromStatusBar + ApplicationContext.killAllProcesses(true)
 ```
 
@@ -180,8 +183,10 @@ PasteAbility（每张图一个）
 | `image` 模块解不了 SVG | 图形资源先离屏光栅化成 PNG 再打进包（`media/tray_icon_*.png`、`media/panel_icon.png`、分层图标 `background/foreground.png`） |
 | 托盘面板是 UIExtension，冷启动约 2.4s | 面板要等 sceneboard 拉起 `:statusBarView` 进程才出现，验证时抢拍要等 ≥3s |
 | 左键面板取消不掉 | `StatusBarItem.quickOperation` 是**必填**，且实现里 `height <= 0` 直接抛 `401`；系统最小约 106vp。别指望"点一下不出面板" |
-| 面板还开着时截图，面板会进冻结画面 | 面板是 sceneboard 的窗口，不算"自身窗口"、不会被排除。实测不等就直接截时，冻结图里带着面板（面板区"压暗蓝按钮"像素 50257）；现行做法是 `TrayAbility` 收到 `action=capture` 后先等 `PANEL_SETTLE_MS = 500` 再 `CaptureFlow`。**这 500ms 是否足够尚未复核**（见 [STATUS.md](STATUS.md) 待复核） |
-| 想用 `terminateSelf()` 把面板收掉 | 会让 sceneboard 不停重建会话（每 ~65ms 一个新进程），截图被反复触发。面板靠焦点转移自然收起 |
+| 面板还开着时截图，面板会进冻结画面 | 面板是 sceneboard 的窗口，不算"自身窗口"、不会被排除。现行做法是收到信号后先等 `PANEL_SETTLE_MS = 500` 再 `CaptureFlow`；实测该等待真的生效（触发 → `CUSTOM_SCREEN_CAPTURE already granted` 间隔 ≈ 504ms），冻结图里没有面板 |
+| 用 `startAbility` 唤醒挂载的常驻 Ability | 会重新激活它的场景容器 → 应用**立刻在任务栏冒出图标，且窗口隐藏后也不消失**（`STARTUP_HIDE`、`ProcessMode.ATTACH_TO_STATUS_BAR_ITEM` 都拦不住）。运行期改用同应用自定义公共事件（`tray/CaptureSignal.ets`），启动 ability 只留给引导 |
+| 常驻 Ability 的窗口内容 | 不需要：它 `STARTUP_HIDE` 挂载、之后永不被 `startAbility` 唤醒，因此不 `loadContent` 也不会留下启动窗口（实测 WMS 里没有它的窗口记录）。原 `pages/Index.ets` 已删除 |
+| 想用 `terminateSelf()` 把面板收掉 | 面板会话会被 sceneboard 重建一次（实测 `onSessionDestroy` → 73ms 后 `onSessionCreate`），重建出来的会话不可见、也不会再次触发截图。早前记的"每 ~65ms 一个新进程、截图被反复触发"未复现 |
 | `statusBarManager.on('statusBarIconClick')` 本机不派发 | 四种配置（普通 / 非导出扩展 / 已挂载进程 / 面板起不来）都没有回调。别把它当触发手段（见 SPEC-AND-TRUTH 3.3） |
 | 挂载进程（`NEW_PROCESS_ATTACH_TO_STATUS_BAR_ITEM`）首次启动报 `16000067` | 校验查的是服务侧 `CreateTrayForApp` 填的 (accessTokenId, instanceKey) 集合，而 `addToStatusBar` 只是投递就返回。要有界重试（`EntryAbility.attachTrayAbility`，实测第 2 次成功） |
 | 挂载进程还没起来就 `terminateSelf` | AMS 判定"最后一个 ability 退出"→ `ProcessMgr: Terminate last` 把**整个应用**杀掉（含已挂载进程，托盘图标一起没）。必须先等到握手文件 `files/tray-ready` |

@@ -13,8 +13,9 @@ const TAG = 'CaptureFlow';
  * 主链路：申请权限 → 截整屏（自身窗口已透明，不进截图）→
  * 冻结画面里框选 → 贴图。失败时降级为系统截图选择器。
  *
- * 触发入口有两个：页面的 onPageShow（点任务栏图标）和全局快捷键，
- * 所以流程放在这里共用；busy 防止两者同时触发跑出两套窗口。
+ * 唯一触发入口是托盘面板的「开始截图」：它发一个跨进程信号（`tray/CaptureSignal.ets`）
+ * 唤醒常驻的 `TrayAbility`，由后者调这里的 `run()`；
+ * `busy` / 去抖防止同一波触发跑出两套窗口。
  */
 export class CaptureFlow {
   private static busy: boolean = false;
@@ -23,7 +24,7 @@ export class CaptureFlow {
   private static lastRunAt: number = 0;
   /** 首次启动的静默期：启动窗口还没消失、窗口也刚配置，此时截图会把它拍进去 */
   private static readonly FIRST_LAUNCH_QUIET_MS: number = 3000;
-  /** 同一波激活可能同时命中 onCreate / onNewWant / onPageShow，去抖 */
+  /** 常驻 Ability 里"信号 → 顺手点一下"可能连着来，去抖 */
   private static readonly REPEAT_GUARD_MS: number = 1500;
 
   static async run(ctx: common.UIAbilityContext): Promise<void> {

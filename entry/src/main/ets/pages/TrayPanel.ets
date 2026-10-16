@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { requestCapture } from '../tray/CaptureSignal';
 import { unregisterTray } from '../tray/TrayEntry';
 
 const DOMAIN = 0x0000;
@@ -26,24 +27,24 @@ struct TrayPanel {
     }
   }
 
-  /** 拉起常驻的 TrayAbility 并带上动作标记 —— 它收到即走截图链路。 */
+  /**
+   * 通知常驻的 TrayAbility"开始截图"。
+   *
+   * 走跨进程信号而不是 `startAbility`：后者会把 TrayAbility 的场景容器重新激活成前台，
+   * 应用立刻在任务栏冒出一个带运行点的图标，而且之后不会自己消失。
+   * 详细实测见 `tray/CaptureSignal.ets`。
+   */
   private async capture(): Promise<void> {
     if (this.busy) {
       return;
     }
     this.busy = true;
-    const ctx = this.ctx();
     try {
-      await ctx.startAbility({
-        bundleName: ctx.extensionAbilityInfo.bundleName,
-        moduleName: 'entry',
-        abilityName: 'TrayAbility',
-        parameters: { action: 'capture' }
-      });
-      hilog.info(DOMAIN, TAG, '%{public}s', 'startAbility TrayAbility ok');
+      await requestCapture();
+      hilog.info(DOMAIN, TAG, '%{public}s', 'capture requested');
     } catch (err) {
       const e = err as BusinessError;
-      hilog.error(DOMAIN, TAG, 'startAbility failed: %{public}d %{public}s', e.code, e.message);
+      hilog.error(DOMAIN, TAG, 'requestCapture failed: %{public}d %{public}s', e.code, e.message);
       this.busy = false;
       return;
     }

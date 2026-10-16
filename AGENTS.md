@@ -24,8 +24,9 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
 
 - 构建需要在**不受限沙箱**下跑：hvigor 会在缓存目录建目录联接（junction），沙箱会拒绝重解析点。
 - 安装：`hdc install -r entry\build\default\outputs\default\entry-default-signed.hap`
-- 触发一次截图：点状态栏折叠区里的托盘图标 → 面板「开始截图」；命令行等价物是
-  `hdc shell aa start -a TrayAbility -b com.youz.ohsnipaste`（不带 `action=capture` 不会截图）
+- 触发一次截图：点状态栏折叠区里的托盘图标 → 面板「开始截图」。**没有命令行等价物**：面板发的是应用内
+  公共事件（`ets/tray/CaptureSignal.ets`），而 `aa start -a TrayAbility` 既不会截图，还会把应用重新拉进任务栏
+  （见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.1）。坐标与判定手法见 [docs/VERIFY.md](docs/VERIFY.md)。
 - 清场：`hdc shell aa force-stop com.youz.ohsnipaste`
 
 真机驱动、截图取证的完整手法见 [docs/VERIFY.md](docs/VERIFY.md)。

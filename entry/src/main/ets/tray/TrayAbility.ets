@@ -4,12 +4,10 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CaptureFlow } from '../common/CaptureFlow';
+import { listenCapture } from './CaptureSignal';
 
 const DOMAIN = 0x0000;
 const TAG = 'TrayAbility';
-
-/** 面板按「开始截图」时带过来的动作标记，用于区分"引导启动"和"要截图" */
-export const ACTION_CAPTURE = 'capture';
 
 /**
  * 引导进程是否就绪的握手文件（在 filesDir 下）。
@@ -38,32 +36,26 @@ const PANEL_SETTLE_MS = 500;
  * `startupVisibility: STARTUP_HIDE` 启动，因此：
  * 1. 它跑在**独立进程**里（`...:entry:TrayAbility:0`），EntryAbility 退出后它还在，
  *    状态栏图标得以在应用没有任何窗口时继续存在 —— 这就是"去掉主窗口/任务栏图标"的前提。
- * 2. 它的窗口一起步就是隐藏的，不会在任务栏占位。
+ * 2. 它**不加载任何页面**，因此压根没有窗口 —— 实测 WindowManagerService 里查不到它的窗口记录，
+ *    任务栏自然也不占位。
  *
  * 截图链路挂在这里（而不是 EntryAbility）：主窗口已经不需要存在，
- * 面板点「开始截图」直接拉起本 Ability 走 CaptureFlow。
+ * 面板点「开始截图」发一个跨进程信号（`CaptureSignal`）唤醒本 Ability 走 CaptureFlow ——
+ * 用信号而不是 `startAbility`，否则应用会立刻被重新拉进任务栏（见 `CaptureSignal` 的说明）。
  */
 export default class TrayAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    hilog.info(DOMAIN, TAG, 'onCreate, action=%{public}s', String(want.parameters?.['action']));
-    this.captureIfAsked(want);
-  }
-
-  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    hilog.info(DOMAIN, TAG, 'onNewWant, action=%{public}s', String(want.parameters?.['action']));
-    this.captureIfAsked(want);
+    hilog.info(DOMAIN, TAG, '%{public}s', 'onCreate (resident, no window to show)');
+    listenCapture(() => {
+      this.capture();
+    });
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
-    // 必须 loadContent：不加载的话系统启动窗口会一直挂着（EntryAbility 的历史踩坑）。
-    // 本 Ability 一起步就是 STARTUP_HIDE，页面内容用户看不到。
-    windowStage.loadContent('pages/Index', (err) => {
-      if (err.code) {
-        hilog.error(DOMAIN, TAG, 'loadContent failed: %{public}s', JSON.stringify(err));
-        return;
-      }
-      this.markReady();
-    });
+    // 刻意不 loadContent：这条常驻 Ability 不需要任何窗口内容（截图由面板的跨进程信号触发），
+    // 而它的窗口一起步就是 STARTUP_HIDE，之后**再也不会被拉起**，所以不存在"启动窗口挂着不消失"
+    // 的问题（那要求窗口会被显示）。实测该 Ability 在 WindowManagerService 里连窗口记录都没有。
+    this.markReady();
   }
 
   /** 落握手文件，通知引导 Ability"我起来了，你可以退出了"。 */
@@ -79,11 +71,8 @@ export default class TrayAbility extends UIAbility {
     }
   }
 
-  private captureIfAsked(want: Want): void {
-    if (want.parameters?.['action'] !== ACTION_CAPTURE) {
-      return;
-    }
-    hilog.info(DOMAIN, TAG, '%{public}s', 'capture requested -> settle then CaptureFlow');
+  private capture(): void {
+    hilog.info(DOMAIN, TAG, '%{public}s', 'capture signal received -> settle then CaptureFlow');
     setTimeout(() => {
       CaptureFlow.run(this.context).catch((err: BusinessError) => {
         hilog.error(DOMAIN, TAG, 'CaptureFlow failed: %{public}d %{public}s', err.code, err.message);

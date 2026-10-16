@@ -75,6 +75,7 @@
 ### 2.7 启动窗口（start window）的行为
 
 - 结论：系统在窗口内容绘制完成前显示启动窗口，**不 `loadContent` 它就不消失**（连同 `startWindowIcon` 一直挂在屏幕中央）；`startWindowIcon` 是 schema 必填项，删掉构建报 `Schema validate failed`。
+- 边界：这条只对**会被显示的窗口**成立。`STARTUP_HIDE` 挂载、且引导之后**再也不会被 `startAbility` 唤醒**的常驻 Ability，不 `loadContent` 也不会留下启动窗口 —— 实测 `TrayAbility` 去掉 `loadContent` 后引导照常（握手文件照写），`hidumper -s WindowManagerService` 里没有它的窗口记录，屏幕上也没有启动窗口。
 - 结论：底色由资源 `start_window_background` 决定，`base` 已改为 `#01000000`（近全透明；`#00000000` 会被当成未设置）。
 - 变更生效的三项配置有 WMS 日志佐证（`OnSetWindowDecorVisible` / `OnSetWindowBackgroundColorSync color=#01000000` / `OnSetWindowShadowEnabled`）。
 - ⚠️ **未验证**：`entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`，暗色模式下激活瞬间可能仍冒出纯黑窗口 —— 登记在 [STATUS.md](STATUS.md) 待确认。
@@ -84,10 +85,12 @@
 ### 3.1 运行时任务栏图标：靠"应用无窗口"消掉（实测通过）
 
 - 结论：`excludeFromDock: true` 本身**无效** —— 三个 Ability 都配了、`bm dump` 也确认系统读到了，应用运行时任务栏**仍然多出图标**（未运行 11 个 → 运行中 12 个；force-stop 后消失）。
-- 真正起作用的是**窗口**：任务栏图标随应用窗口出现。改成"托盘图标由挂在状态栏项上的隐藏 Ability 持有、
-  引导 Ability 退出"之后（见 3.3），应用常态下没有任何窗口，任务栏里的图标随之消失。
-- 判别证据：同一块任务栏裁剪区，改造前是"蓝色自绘图标 + WPS"，改造后只剩 WPS；且
-  `hidumper -s WindowManagerService -a '-a'` 查不到任何 `ohsnipaste` 窗口。
+- 真正起作用的是**场景容器是否被激活**，而不是窗口可见与否：`addToStatusBar` + `NEW_PROCESS_ATTACH_TO_STATUS_BAR_ITEM` +
+  `STARTUP_HIDE` 的**首次**启动只把会话放进"不显示"列表（无任务栏图标、无窗口记录）；此后任何
+  `startAbility` 把该会话"显示"一次，任务栏就多出图标 —— 窗口随后被 `minimize()`（ZOrd 变 `-1`）也不会让它消失，
+  只有 force-stop / 「退出」才清。所以运行期一次 ability 启动都不能有（见 3.3 的信号通道）。
+- 判别证据：同一块任务栏裁剪区，改造前是"蓝色自绘图标 + WPS"，改造后只剩 WPS；
+  触发截图前后各截一次，裁剪区都只有 WPS；且 `hidumper -s WindowManagerService -a '-a'` 查不到任何 `ohsnipaste` 窗口。
 - 处置：`excludeFromDock: true` 保留（语义正确、无副作用）。
 - 证据：**实测**（2026-10-16）+ **SDK**。
 
@@ -107,7 +110,12 @@
 - **`statusBarIconClick` 本机不派发**：四种配置都试过（正常扩展 / `exported:false` / 已挂载进程监听 / 面板起不来），回调一次都没来；面板照旧弹出或什么都没发生。SDK 实现里该事件是存在的（`STATUS_BAR_ICON_CLICK = 7 → 'statusBarIconClick'`，载荷 `data.iconClickType`），派发方在服务侧，推测是"图标直显在状态栏"才发，未验证。
 - **事件只会发给"挂在状态栏项上的进程"**：SDK 实现里有 `IStatusBarCallback::AttachPidToStatusBarItem / OnAttachPidToStatusBarItem`，而挂载靠 `startAbility` 时设 `processMode: NEW_PROCESS_ATTACH_TO_STATUS_BAR_ITEM` + `startupVisibility: STARTUP_HIDE`（调用方须**先** `addToStatusBar`）。首次启动常报 `16000067 The StartOptions check failed` —— 该校验查服务侧 `CreateTrayForApp` 填的集合，而 `addToStatusBar` 只投递就返回，**要有界重试**（实测第 2 次成功）。挂载成功后该 Ability 跑在独立进程 `...:entry:TrayAbility:0`，主 Ability 退出后它仍在。
 - ⚠️ **引导 Ability 退出前必须确认挂载进程已就绪**：否则 AMS 判"最后一个 ability 退出"，`ProcessMgr: Terminate last` 会把**整个应用**（含已挂载进程）杀掉，托盘图标一起消失。
-- **面板还开着时截图，面板会进冻结画面**：面板是 sceneboard 的窗口，不算"自身窗口"。判别：面板可见时截出的图里带面板（按 Esc 关掉选区窗口后同一区域标题暗像素 3438 → 0，证明它在图里而不是实时窗口）。**不等就直接截时实测带面板**（面板区"压暗蓝按钮"像素 50257）；现行做法是触发后先等 500ms 再截，够不够**尚未复核**（见 [STATUS.md](STATUS.md) 待复核）。
+- **面板还开着时截图，面板会进冻结画面**：面板是 sceneboard 的窗口，不算"自身窗口"。判别：面板可见时截出的图里带面板（按 Esc 关掉选区窗口后同一区域标题暗像素 3438 → 0，证明它在图里而不是实时窗口）。**不等就直接截时实测带面板**（面板区"压暗蓝按钮"像素 50257）；现行做法是触发后先等 500ms 再截 —— 已复核：日志里"收到触发 → `CUSTOM_SCREEN_CAPTURE already granted`"间隔 ≈ 504ms，且选区窗口里的冻结画面看不到面板。
+- **运行期不能用 `startAbility` 唤醒挂载进程**：只带 `startupVisibility: STARTUP_HIDE`、或再加
+  `processMode: ATTACH_TO_STATUS_BAR_ITEM`，两种写法都照样把会话激活成前台 → 任务栏立刻多出图标（见 3.1）。
+  可用通道是**同应用内的自定义公共事件**（`commonEventManager`）：面板进程 `publish('com.youz.ohsnipaste.action.CAPTURE')`
+  → 常驻进程 `subscribe` 回调 → 截图链路，全程不碰 AMS 的场景切换。实测日志
+  `CaptureSignal: capture signal published` → `TrayAbility: capture signal received`，同毫秒到达。
 - 系统侧证据：`PcAccessPluginComponent: ... "action":"action.systemui.plugin.STATUS_BAR","pluginPosition":"BOTTOM_RIGHT"`；点击后依次 `StartUIExtension: element: com.youz.ohsnipaste/TrayStatusBarExt` → 扩展进程 `com.youz.ohsnipaste:statusBarView` → `TrayExt: onSessionCreate` → `StartUIExtension: pages/TrayPanel`。
 - 图标渲染：自绘图标按原样出现在折叠区；卸载应用后同一区域品红像素 545 → 0，证明图标确由该插件产生。
 - ⚠️ **误导日志**：每次调用 napi 层都打 `1010710001 The size of the pixelmap exceeds the limit`。实测 1×1 到 128×128 各种尺寸、`editable` 取真取假、真实解码的 PNG，**全部照打**，而图标仍正常渲染 —— 不要拿这条日志判成败（它就是上面 `checkIcons` 的尺寸检查在说话）。
@@ -148,6 +156,11 @@
    判别反例：`StatusBarItem.quickOperation` 在 `.d.ts` 里**必填**；实现里 `checkQuickOperation` 对 `height <= 0` 抛 `401`（实测确认）；官方示例与社区文档都把左键弹窗当作既定行为。更要命的是"面板还开着就截图"会把面板烙进冻结画面（见 3.3），所以自动触发这条路在体验上也不成立。
 9. **「`statusBarIconClick` 能拿到托盘点击」** —— 社区示例里有 `if (data['iconClickType'] === 'leftClick')`，看着像可用。
    判别反例：四种配置下真机实测回调一次都没来（见 3.3）。SDK 实现里事件确实存在，但**本机在折叠区图标上不派发**，未查明触发条件。
+10. **「用 `startAbility` 唤醒挂载进程不会影响任务栏」** —— 以为常驻会话已经"挂在不显示列表里"，再启动只是投递一个 want。
+    判别反例：2026-10-16 实测三种写法（裸 `startAbility`、加 `STARTUP_HIDE`、再加 `ATTACH_TO_STATUS_BAR_ITEM`）都让 sceneboard 把
+    TrayAbility 的会话重新激活成前台：`PCDock-PcSmartDockModel: refreshSCBSceneContainerSession : add: <persistentId>, com.youz.ohsnipaste, , entry, TrayAbility`
+    → `SCBSceneContainer: aboutToAppear`，任务栏立刻多出带运行点的图标，且窗口 `minimize()` 后仍在，只有 force-stop 才清。
+    正解是运行期改用同应用自定义公共事件（见 3.1 / 3.3）。
 
 ## 6. 候选方案与待决策
 
@@ -160,6 +173,6 @@
 | 5 | 比较入口 UX（贴图右键菜单加「设为比较基准」，或比较时弹列表选一张） | 目前只能跟"最后一张贴图"比 | 小 | 你 |
 | 6 | `ImageDiff` 单元测试 | 纯计算逻辑可脱离设备验证对齐与统计 | 小 | 你 |
 | 7 | 贴图窗口去掉按钮、能力收进右键菜单后，是否再留一个最小的可见操作入口 | 贴图窗口上现在没有任何可见按钮，新用户可能找不到菜单 | 小（会重新挡住一点图片） | 你 |
-| 8 | 托盘入口从"左键面板"改成"右键菜单 + `menuAction` 直接启动 ability" | 省掉面板这一层，冻结图天然干净（官方示例的正规路径） | 小；但要从右键触发，且用户 2026-10-16 选择保留左键面板 | 你 |
+| 8 | 托盘入口从"左键面板"改成"右键菜单 + `menuAction` 直接启动 ability" | 省掉面板这一层 | 小；但要从右键触发，且 `menuAction` 是**启动 ability**，会重新把应用拉进任务栏（见 3.1），除非改成同时投递公共事件 | 你 |
 
 （未列入的候选：画中画 —— 已排除，理由见本文 2.2。）
