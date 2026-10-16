@@ -27,8 +27,10 @@
 | 贴图窗口 | ✅ | `pin window 1200x700 for image 1200x700`；无边框、可拖动、右键菜单可用 |
 | 复制 / 保存 | ✅ | `ImageShare: copied to clipboard`；保存弹系统对话框、默认名 `snipaste_20261016_124328.png` |
 | 比较 | ✅ | 同区域 `差异 0 px / 400000 px (0.00%)`；时钟区域 `差异 179 px / 27000 px (0.66%) · 区域 15×21 @(282,18)` |
-| 首次启动不截图 | ✅ | `onCreate` → `skip: first launch (by design)`；再激活 → `onNewWant -> capture` |
-| 状态栏托盘入口 | ✅ | `TrayEntry: tray icon registered`；折叠区出现线稿图标，点它 → `StartUIExtension: pages/TrayPanel`；面板内「开始截图」→ `CaptureFlow: main window hidden` → `SelectionPage ... shot_*.png`；「退出」→ `pidof` 为空、托盘插件数 8→7、图标槽位暗像素 309→0 |
+| 首次启动不截图 | ✅ | 引导只注册托盘与拉起常驻进程，不截图；截图统一由托盘面板的 `action=capture` 触发 |
+| 状态栏托盘入口 | ✅ | `TrayEntry: tray icon registered`；折叠区出现线稿图标，点它 → `StartUIExtension: pages/TrayPanel`；面板内「开始截图」→ `TrayAbility: capture requested -> CaptureFlow` → `CaptureFlow: main window hidden` → `SelectionPage ... shot_*.png`；「退出」→ `tray icon removed` → `KillApplicationSelf` → `pidof` 为空、窗口全清 |
+| 应用无窗口常驻 | ✅ | 引导后 `ProcessMgr: Terminate last` 只终结主进程，挂载进程 `...:entry:TrayAbility:0` 仍在；`hidumper -s WindowManagerService` 查不到任何 `ohsnipaste` 窗口；任务栏裁剪区里我们的图标消失（只剩 WPS） |
+| 托盘面板截图不带面板 | ⚠️ | 不等就直接截时冻结图里带面板（面板区"压暗蓝按钮"像素 50257）；现行靠 `TrayAbility` 触发后等 500ms，**是否足够未复核**（驱动点击时托盘图标位置会漂，自动复核未跑通） |
 
 ## 模块健康度
 
@@ -41,26 +43,30 @@
 | 比较 | `common/ImageDiff.ets` + `common/PinRegistry.ets` | ⚠️ 算法按需求实现，基点在框选位置变化后失准（限制，见 SPEC-AND-TRUTH 候选 3） |
 | 分享 | `common/ImageShare.ets` | ✅ 剪贴板 + 系统保存对话框 |
 | 传值 / 落盘 | `common/PinPayload.ets`、`common/PinStore.ets` | ✅ 窗口 id + AppStorage；fd 解码，固定 RGBA_8888 |
-| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、左键面板（开始截图 / 退出）均真机跑通；⚠️ 面板冷启动约 2.4s |
+| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayAbility.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、挂载常驻（独立进程）、左键面板（开始截图 / 退出）均真机跑通；⚠️ 面板冷启动约 2.4s；⚠️ 挂载首次调用报 `16000067`，靠有界重试兜住 |
+| 引导 | `entryability/EntryAbility.ets` | ✅ 注册托盘 → 挂载常驻进程 → 等握手文件 → `terminateSelf`；⚠️ 握手文件用 `fs.accessSync`（返回 boolean，不是抛异常） |
 
 ## 开放待办（做完即删）
 
-1. **待复核：触发链路相关的两条早期实测**（设备未连接，需按 [VERIFY.md](VERIFY.md) 的典型序列真机复跑）
-   - `minimize()` 与截图顺序：早期实测称"先最小化自身窗口再截图会让应用进后台、`startAbility` 报 `201`"，而现行 `CaptureFlow` 正是"申请权限 → `minimize()` → 截图 → `startAbility`"（`common/CaptureFlow.ets:44`）。
-   - VERIFY 里"选区窗口开着时再 `aa start` 不会再触发截图"：当时触发点只有 `onPageShow`，现在 `onNewWant` 也会触发。
-2. **待确认：暗色模式启动窗口** —— `entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`（`base` 已改 `#01000000`）。暗色模式下激活瞬间可能仍冒出纯黑窗口；未实测。
+1. **待复核：`minimize()` 与截图顺序**（设备已连接可复跑，按 [VERIFY.md](VERIFY.md) 的典型序列）
+   - 早期实测称"先最小化自身窗口再截图会让应用进后台、`startAbility` 报 `201`"，而现行 `CaptureFlow` 正是
+     "申请权限 → `minimize()` → 截图 → `startAbility`"（`common/CaptureFlow.ets`）；本轮改造后这条路径
+     已实测跑通（面板触发 → 截图 → 选区窗口出现），但当时那条记录的适用条件仍未查清。
+2. **待复核：托盘面板截图里不该带面板** —— `tray/TrayAbility.ets` 的 `PANEL_SETTLE_MS = 500` 是拍的，
+   只验证过"不等（0ms）会带面板"。复核方法见 [VERIFY.md](VERIFY.md) 第 7 条（注意：托盘图标在折叠区里的
+   位置会随托盘内容漂移，硬编码坐标会点空，每次先截图定位）。
 3. 比较基点稳健化（方案见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 候选 3）—— 需你确认是否偏离最初指定的算法。
 4. 多贴图管理（透明度、滚轮缩放、一键关全部、贴图列表）。
 5. 比较入口 UX（贴图右键菜单「设为比较基准」等）。
 6. `ImageDiff` 单元测试（纯计算，可脱离设备）。
-7. 换新版本系统后复测 `excludeFromDock`（本机实测无效，配置已保留）。
+7. **待确认：暗色模式启动窗口** —— `entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`（`base` 已改 `#01000000`）。暗色模式下引导瞬间可能仍冒出纯黑窗口；未实测。
 
 ## 已知限制（结论与证据在 SPEC-AND-TRUTH，本文不复制）
 
 - 贴图**不能浮在其它应用之上**（SPEC-AND-TRUTH 2.1 / 2.2）
 - 贴图窗口四角有系统给的约 40px 圆角（2.3 / 2.4）
-- 应用运行时任务栏必然有一个图标（SPEC-AND-TRUTH 3.1）
-- 托盘图标只在应用进程存活期间存在：平台没有给三方应用后台常驻服务，进程被杀或点面板「退出」后图标即消失（SPEC-AND-TRUTH 3.3）
+- 托盘图标只在应用**还有进程活着**时存在；「退出」或进程被杀后图标消失（SPEC-AND-TRUTH 3.3）
+- 托盘图标左键**必然弹面板**，取消不掉；"点一下直接截图"平台不支持（3.3）
 - 第三方做不了全局快捷键（3.2）
 - 图片比较的基点不稳健（候选 3）
 

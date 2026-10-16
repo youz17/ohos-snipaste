@@ -15,13 +15,15 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 
 | Ability / 扩展 | 窗口形态 | 职责 |
 | --- | --- | --- |
-| `EntryAbility` | 主窗口**不可见**：去装饰 + 背景 `#01000000` + 去阴影，缩到系统最小尺寸（320x72vp）贴右下角后 `minimize()` | 入口与编排：接收激活事件交给 `CaptureFlow`；冷启动注册状态栏托盘图标，`onDestroy` 摘掉 |
+| `EntryAbility` | 主窗口存在但**不可见**（去装饰 + 背景 `#01000000` + 去阴影），且只活到引导结束 | 引导：注册托盘图标 → 拉起 `TrayAbility` → 确认它起来后 `terminateSelf`。之后应用**没有任何窗口**，任务栏也就不占位 |
+| `TrayAbility` | **无可见窗口**：以 `STARTUP_HIDE` 挂到状态栏项上，跑在独立进程 `...:entry:TrayAbility:0` | 常驻载体：托盘图标活在这个进程里；截图链路（`CaptureFlow`）也挂这里 |
 | `SelectionAbility` | 全屏、无装饰、去标题按钮，`setWindowLayoutFullScreen` + `maximize()` 之后 `setWindowTopmost(true)`（singleton） | 铺冻结画面，自绘遮罩 / 选区 / 8 个把手 / 放大镜 / 操作条 |
 | `PasteAbility` | 每张图一个窗口，无装饰无阴影、`setWindowTopmost(true)`，尺寸 = 图片像素尺寸（multiton） | 显示贴图或差异图；拖动移动、右键菜单 |
 | `TrayStatusBarExt`（`type: statusBarView`，`exported: true`） | 无独立窗口；左键面板由 sceneboard 承载（页面 `pages/TrayPanel.ets`），跑在独立进程 `:statusBarView` | 托盘图标的左键面板：开始截图 / 退出 |
 
-入口页（`pages/Index.ets`）刻意没有任何界面元素，只有一层近全透明的 `Column`：它的存在是必须的
-（不 `loadContent` 的话系统启动窗口不会消失，见 SPEC-AND-TRUTH 2.7），但用户全程只看到选区窗口和贴图窗口。
+入口页（`pages/Index.ets`）刻意没有任何界面元素，只有一层近全透明的 `Column`：`EntryAbility` 与
+`TrayAbility` 都必须 `loadContent`（不加载的话系统启动窗口不会消失，见 SPEC-AND-TRUTH 2.7），
+但用户全程只看到选区窗口和贴图窗口。
 
 ## 触发链路
 
@@ -29,22 +31,20 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 
 | 入口 | 何时 |
 | --- | --- |
-| `EntryAbility.onCreate` | 冷启动 |
-| `EntryAbility.onNewWant` | 应用已在运行时再被激活（例如再点一次任务栏图标） |
-| `Index.onPageShow` | 页面被显示/恢复时 |
-| 托盘面板的「开始截图」 | `startAbility(EntryAbility)` → 走上面 `onNewWant` 那条 |
+| `TrayAbility.onCreate` / `onNewWant` | 托盘面板的「开始截图」→ `startAbility(TrayAbility, {action:'capture'})`，带 `action` 才截，引导启动不带 |
+| `EntryAbility.onCreate` | 冷启动只做引导，不截图 |
 
 ```
 CaptureFlow.run(ctx)
   ├─ 丢弃条件：距启动 < 3s（启动窗口还在，截进去就是那个大窗口）
-  │             或 距上次 < 1.5s（onCreate/onNewWant/onPageShow 可能几毫秒内连着命中）
+  │             或 距上次 < 1.5s
   │             或 busy（正在跑）
   ├─ ScreenCapturer.ensurePermission   先 checkAccessTokenSync 查已有授权，未授权才弹窗
-  ├─ hideSelfWindow()                  win.minimize()，把主窗口收走
+  ├─ hideSelfWindow()                  win.minimize()，把窗口收走（TrayAbility 的窗口本来就是隐藏的）
   ├─ ScreenCapturer.captureScreen()    无参 screenshot.capture() → 3120x2080 PixelMap
   ├─ PinStore.saveAsPng(pm, filesDir, 'shot')   → files/shot_<ts>.png
   ├─ Launcher.openSelection(path, w, h)         → startAbility(SelectionAbility)
-  └─ hideSelfWindow()                  选区窗口已在前台，再收一次主窗口
+  └─ hideSelfWindow()                  选区窗口已在前台，再收一次
 未授权 / 截图失败 → pickAndPin：screenshot.pick() 系统选择器 → 直接贴出
 ```
 
@@ -53,23 +53,31 @@ CaptureFlow.run(ctx)
 
 ## 状态栏托盘入口
 
-常驻入口不靠全局快捷键（平台不给），也不靠任务栏图标（去不掉），而是状态栏折叠区里的自绘图标。
+常驻入口不靠全局快捷键（平台不给），而是状态栏折叠区里的自绘图标。图标由**挂在状态栏项上的常驻进程**持有，
+所以应用可以没有任何窗口 —— 任务栏也就不占位（这一点改写了 SPEC-AND-TRUTH 3.1 的旧结论）。
 
 ```
-registerTray(ctx)                      EntryAbility.onCreate 调用
-  ├─ app.media.tray_icon_white / _black → PixelMap（image 模块不解 SVG，这两个是离屏光栅化好的 PNG）
-  └─ statusBarManager.addToStatusBar(ctx, item)，item.quickOperation → TrayStatusBarExt
-左键点图标 → sceneboard 拉起 TrayStatusBarExt（独立进程 com.youz.ohsnipaste:statusBarView）
-  └─ onSessionCreate → session.loadContent('pages/TrayPanel')
-       ├─ 开始截图 → startAbility(EntryAbility) → onNewWant → CaptureFlow
-       └─ 退出     → removeFromStatusBar + ApplicationContext.killAllProcesses(true)
-unregisterTray(ctx)                    EntryAbility.onDestroy 调用（无前台窗口时系统会拒绝，属预期）
+引导（只在冷启动跑一次）
+  EntryAbility.onCreate → registerTray(ctx)
+    ├─ app.media.tray_icon_white / _black → PixelMap（image 模块不解 SVG，这两个是离屏光栅化好的 PNG）
+    └─ statusBarManager.addToStatusBar(ctx, item)，item.quickOperation → TrayStatusBarExt
+  → startAbility(TrayAbility, {processMode: NEW_PROCESS_ATTACH_TO_STATUS_BAR_ITEM,
+                               startupVisibility: STARTUP_HIDE})       ← 有界重试，首次常报 16000067
+  → 轮询 files/tray-ready（TrayAbility 窗口起来后落下的握手文件）
+  → terminateSelf()      主窗口随之消失；此时 AMS 才认账，不会把应用当"最后一个 ability 退出"而杀掉
+
+运行期
+  左键点图标 → sceneboard 拉起 TrayStatusBarExt（独立进程 com.youz.ohsnipaste:statusBarView）
+    └─ onSessionCreate → session.loadContent('pages/TrayPanel')
+         ├─ 开始截图 → startAbility(TrayAbility, {action:'capture'}) → onNewWant → CaptureFlow
+         └─ 退出     → removeFromStatusBar + ApplicationContext.killAllProcesses(true)
 ```
 
 图标是**离屏光栅化**产物：`image` 模块不支持 SVG 解码，所以 `screenshot-icon-line.svg` 用无头 Chrome
 渲染成 48×48 的黑/白两份（`media/tray_icon_black.png`、`media/tray_icon_white.png`，`icons.white`
-对应深色背景、`black` 对应浅色背景），彩色的 `screenshot-icon.svg` 渲染成 `media/panel_icon.png`
-（128×128）给面板当徽标。
+对应深色背景、`black` 对应浅色背景）；彩色的 `screenshot-icon.svg` 渲染成 `media/panel_icon.png`
+（128×128）给面板当徽标，并拆成背景/前景两层重绘应用的分层图标
+（`AppScope` 与 `entry` 各一份 `background.png` / `foreground.png`，1024×1024）。
 
 ## 数据流
 
@@ -168,6 +176,14 @@ PasteAbility（每张图一个）
 | 系统对主窗口有最小尺寸（约 608x136 px） | 贴图页用同图放大模糊铺底填补（`ImageFit.Cover` + `blur(40)`） |
 | `resize` 收 vp、`moveWindowTo` 收 px | 换算时显式乘 `densityPixels`（`entryability/EntryAbility.ets`） |
 | 启动窗口相关 | 必须 `loadContent`；`startWindowIcon` 是 schema 必填；底色见 SPEC-AND-TRUTH 2.7 |
-| `statusBarView` 扩展必须 `exported: true` | 否则系统起不来（日志只有 `no ability or uiextension`），点托盘图标毫无反应 |
-| `image` 模块解不了 SVG | 图形资源先离屏光栅化成 PNG 再打进包（`media/tray_icon_*.png`、`media/panel_icon.png`） |
+| `statusBarView` 扩展的 `exported` | 官方示例写 `true`，本项目保持一致；但本机实测 `false` 时 sceneboard 照样能拉起该扩展，"必须 true"不成立（见 SPEC-AND-TRUTH 第 5 节墓地） |
+| `image` 模块解不了 SVG | 图形资源先离屏光栅化成 PNG 再打进包（`media/tray_icon_*.png`、`media/panel_icon.png`、分层图标 `background/foreground.png`） |
 | 托盘面板是 UIExtension，冷启动约 2.4s | 面板要等 sceneboard 拉起 `:statusBarView` 进程才出现，验证时抢拍要等 ≥3s |
+| 左键面板取消不掉 | `StatusBarItem.quickOperation` 是**必填**，且实现里 `height <= 0` 直接抛 `401`；系统最小约 106vp。别指望"点一下不出面板" |
+| 面板还开着时截图，面板会进冻结画面 | 面板是 sceneboard 的窗口，不算"自身窗口"、不会被排除。实测不等就直接截时，冻结图里带着面板（面板区"压暗蓝按钮"像素 50257）；现行做法是 `TrayAbility` 收到 `action=capture` 后先等 `PANEL_SETTLE_MS = 500` 再 `CaptureFlow`。**这 500ms 是否足够尚未复核**（见 [STATUS.md](STATUS.md) 待复核） |
+| 想用 `terminateSelf()` 把面板收掉 | 会让 sceneboard 不停重建会话（每 ~65ms 一个新进程），截图被反复触发。面板靠焦点转移自然收起 |
+| `statusBarManager.on('statusBarIconClick')` 本机不派发 | 四种配置（普通 / 非导出扩展 / 已挂载进程 / 面板起不来）都没有回调。别把它当触发手段（见 SPEC-AND-TRUTH 3.3） |
+| 挂载进程（`NEW_PROCESS_ATTACH_TO_STATUS_BAR_ITEM`）首次启动报 `16000067` | 校验查的是服务侧 `CreateTrayForApp` 填的 (accessTokenId, instanceKey) 集合，而 `addToStatusBar` 只是投递就返回。要有界重试（`EntryAbility.attachTrayAbility`，实测第 2 次成功） |
+| 挂载进程还没起来就 `terminateSelf` | AMS 判定"最后一个 ability 退出"→ `ProcessMgr: Terminate last` 把**整个应用**杀掉（含已挂载进程，托盘图标一起没）。必须先等到握手文件 `files/tray-ready` |
+| `fs.accessSync(path)` 返回 boolean | 它**不抛异常**。写成 try/catch 判断存在性会恒真、握手直接失效（本项目踩过一次） |
+| 托盘图标尺寸 | 实现里 `STANDARD_SIZE = 24`（vp），即应为 `vp2px(24)`；尺寸不符只记一条 `The size of the pixelmap exceeds the limit`，不拦注册 |

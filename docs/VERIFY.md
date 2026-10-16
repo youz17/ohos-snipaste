@@ -62,10 +62,10 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
 
 1. **贴图窗口在别的窗口获得焦点后会 `ZOrd=-1`（被隐藏）**。若先点了桌面/别的应用再右键
    贴图，测的是"不可见窗口"，结论无效。正确顺序：先创建贴图，期间不点别处，再操作它。
-2. **选区窗口开着时再 `aa start` 不会再触发截图**：页面已可见，`onPageShow` 不重复触发。
-   > ⚠️ 待复核：这条是触发点还只有 `onPageShow` 时记录的；现行 `EntryAbility.onNewWant` 也会触发
-   > （见 [ARCHITECTURE.md](ARCHITECTURE.md) 触发链路），设备未连接未复跑，见 [STATUS.md](STATUS.md) 待办 1。
-   要重新截图必须先让上一个选区结束（贴图/复制/保存/取消/Esc）。
+2. **截图入口只有一个**：`aa start -a EntryAbility` 现在只做引导、**不截图**；要触发截图得带动作标记
+   （`aa start -a TrayAbility -b com.youz.ohsnipaste --pi action capture`，等同于点面板「开始截图」）。
+   另外选区窗口开着时不会重复触发（`CaptureFlow` 的 busy/去抖拦着），要重新截图必须先结束上一个选区
+   （贴图/复制/保存/取消/Esc）。
 
 ## 还有两个坑
 
@@ -93,18 +93,27 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
 
 ## 状态栏托盘图标的验证手法
 
-1. 冷启动带 `statusBarView` 扩展的包（`aa start -a EntryAbility -b com.youz.ohsnipaste`），扩展里调
-   `statusBarManager.addToStatusBar`。
-2. 点状态栏右下角的 `^`：`uinput -M -g 2390 2015 2391 2015 80`（实测坐标，随分辨率/主题会变）。
-   它是**切换**语义，重复点会关掉面板 —— 每一步都先截图确认面板开着。
+1. 冷启动（`aa start -a EntryAbility -b com.youz.ohsnipaste`）。引导链路该出现三行日志：
+   `TrayEntry: tray icon registered` → `EntryAbility: TrayAbility attached (attempt N)`（**首次常报
+   `16000067 The StartOptions check failed`，第 2 次才成功，属预期**）→ `bootstrap done, main ability terminated`。
+   之后 `ps -ef | grep youz` 应该只剩 `...:entry:TrayAbility:0` 这一个进程。
+2. 点状态栏右下角的 `^`。它是**切换**语义，且折叠区**约 2.4 秒自动收起** —— 开面板和点图标必须写在同一条命令里，
+   中间只留 ~1 秒，否则点空。实测坐标：`^` 约 `(2307,2020)`、我们的图标约 `(2437,1875)`
+   （随托盘内容增减会变，**先截图再点**，别硬用这两个数）。
 3. 展开的面板里是各应用的状态栏插件图标（含 WPS 等三方应用）。**给自绘图标一个独有颜色**再数像素最稳：
    例如"透明底 + 品红圆"，用 PIL 数 `(r>180)&(b>180)&(g<110)` —— 装上时 545 px、卸载后 0 px。
 4. 点图标：`uinput -M -g <iconX> <iconY> <iconX+1> <iconY> 80`。**面板要等 ≥3 秒**才出现（扩展冷启动实测约 2.4s），
-   抢拍早了只能看到桌面。成功时日志依次出现 `StartUIExtension: element: .../<扩展名>` →
-   `<扩展名>: onSessionCreate -> loadContent` → `AceUiExtensionComponent: StartUIExtension: pages/<页面>`。
-5. **别被 `1010710001 The size of the pixelmap exceeds the limit` 骗了**：它每次都打，图标照样渲染
-   （见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 3.3）。判成败只看第 4 步的日志与画面。
-6. 换设备安装前先看签名：`hdc shell bm get -u` 得到的 UDID 必须在该 `.p7b` 的 `device-ids` 里，
+   抢拍早了只能看到桌面。成功时日志依次出现 `StartUIExtension: element: com.youz.ohsnipaste/TrayStatusBarExt` →
+   `TrayExt: onSessionCreate` → `AceUiExtensionComponent: StartUIExtension: pages/TrayPanel`。
+5. 面板里的按钮位置（实测）：「开始截图」居中的蓝色按钮（`#2563EB`，约 4.8 万像素，中心 ≈ `(2636,1765)`）、
+   「退出」是下方浅灰底红字（红字中心 ≈ `(2638,1865)`）。用 PIL 按颜色定位最稳，别硬编码。
+6. **别被 `1010710001 The size of the pixelmap exceeds the limit` 骗了**：它每次都打，图标照样渲染
+   （见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 3.3）。判成败只看第 5 步的日志与画面。
+7. **测"截图里有没有面板"**：面板可见时截图会把面板烙进冻结画面。判别法是关掉选区窗口（`uinput -K -d 2070 -u 2070`）
+   再截同一块区域 —— 暗像素从 3438 掉到 0 就说明它在图里而不是实时窗口。
+8. **测"任务栏有没有我们"**：裁 `(2150,1975)-(2500,2085)` 看有没有自绘图标；再
+   `hidumper -s WindowManagerService -a '-a' | Select-String ohsnipaste`，无窗口才对。
+9. 换设备安装前先看签名：`hdc shell bm get -u` 得到的 UDID 必须在该 `.p7b` 的 `device-ids` 里，
    否则 `hdc install` 报 `9568423`。
 
 ## 典型验证序列

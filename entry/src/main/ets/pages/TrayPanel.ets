@@ -26,7 +26,7 @@ struct TrayPanel {
     }
   }
 
-  /** 拉起 EntryAbility —— 它被激活即走截图链路（onNewWant → CaptureFlow）。 */
+  /** 拉起常驻的 TrayAbility 并带上动作标记 —— 它收到即走截图链路。 */
   private async capture(): Promise<void> {
     if (this.busy) {
       return;
@@ -37,9 +37,10 @@ struct TrayPanel {
       await ctx.startAbility({
         bundleName: ctx.extensionAbilityInfo.bundleName,
         moduleName: 'entry',
-        abilityName: 'EntryAbility'
+        abilityName: 'TrayAbility',
+        parameters: { action: 'capture' }
       });
-      hilog.info(DOMAIN, TAG, '%{public}s', 'startAbility EntryAbility ok');
+      hilog.info(DOMAIN, TAG, '%{public}s', 'startAbility TrayAbility ok');
     } catch (err) {
       const e = err as BusinessError;
       hilog.error(DOMAIN, TAG, 'startAbility failed: %{public}d %{public}s', e.code, e.message);

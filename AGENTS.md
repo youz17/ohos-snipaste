@@ -24,16 +24,18 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
 
 - 构建需要在**不受限沙箱**下跑：hvigor 会在缓存目录建目录联接（junction），沙箱会拒绝重解析点。
 - 安装：`hdc install -r entry\build\default\outputs\default\entry-default-signed.hap`
-- 触发一次截图：`hdc shell aa start -a EntryAbility -b com.youz.ohsnipaste`（等同于点任务栏图标）
+- 触发一次截图：点状态栏折叠区里的托盘图标 → 面板「开始截图」；命令行等价物是
+  `hdc shell aa start -a TrayAbility -b com.youz.ohsnipaste`（不带 `action=capture` 不会截图）
 - 清场：`hdc shell aa force-stop com.youz.ohsnipaste`
 
 真机驱动、截图取证的完整手法见 [docs/VERIFY.md](docs/VERIFY.md)。
 
 ## 架构一句话
 
-`EntryAbility`（不可见主窗口，被激活即交给 `CaptureFlow`）→ `SelectionAbility`（全屏铺冻结画面、
-自绘选区与操作条）→ `PasteAbility`（multiton，每张贴图一个无装饰置顶窗口）；另有
-`TrayStatusBarExt`（状态栏托盘图标的左键面板）作常驻入口。细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+`EntryAbility`（引导：注册托盘图标 → 拉起常驻进程 → 自己退出）→ `TrayAbility`（`STARTUP_HIDE` 挂在
+状态栏项上的常驻进程，托盘图标与截图链路都在这里）→ `SelectionAbility`（全屏铺冻结画面、自绘选区与操作条）
+→ `PasteAbility`（multiton，每张贴图一个无装饰置顶窗口）；另有 `TrayStatusBarExt`（托盘图标的左键面板）。
+细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 任务路由
 
@@ -51,10 +53,11 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
 - 贴图窗口**不能浮在其它应用之上**（`WINDOW_TOPMOST` 只保证在本应用窗口之上）。
 - 贴图窗口四角有系统给的约 40px 圆角，`setWindowCornerRadius` 对主窗口直接报 1300004。
 - 图片比较的基点（第一个非背景像素）在框选位置变化后会失准。
-- 应用运行时任务栏必然有一个图标：`excludeFromDock: true` 已加但实测无效。
-- 状态栏托盘图标**已接入为常驻入口**（`ets/tray/`：`statusBarManager.addToStatusBar` + `exported: true`
-  的 `statusBarView` 扩展），但它只在应用进程存活期间存在。平台约束见
-  [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.3，实现见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+- 状态栏托盘图标左键**必然**弹面板（`quickOperation` 是 SDK 必填字段），"点一下直接截图"平台不支持。
+- 状态栏托盘图标**已接入为常驻入口**（`ets/tray/`：`statusBarManager.addToStatusBar` +
+  `STARTUP_HIDE` 挂载的 `TrayAbility`）。应用因此可以没有窗口、也不占任务栏；但图标只在应用**还有进程
+  活着**时存在。平台约束见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.1 / 3.3，实现见
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 - 第三方做不了全局快捷键：`inputConsumer.on('hotkeyChange')` 注册成功但按键不回调（它是"配置变更"
   通知），`on('keyPressed')` 文档限定前台；系统快捷键表只读、`shortcuts.json` 无键位字段。
 

@@ -41,6 +41,7 @@
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "excludeFromDock": true,
+        "removeMissionAfterTerminate": true,
         "skills": [
           {
             "entities": [
@@ -51,6 +52,18 @@
             ]
           }
         ]
+      },
+      {
+        "name": "TrayAbility",
+        "srcEntry": "./ets/tray/TrayAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "launchType": "singleton",
+        "exported": false,
+        "excludeFromDock": true,
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background"
       },
       {
         "name": "PasteAbility",

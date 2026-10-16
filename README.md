@@ -15,11 +15,11 @@ HarmonyOS NEXT（ArkTS / Stage 模型）上的 Snipaste 类截图 + 贴图工具
 | 复制 / 保存 | 写系统剪贴板 / 走系统保存对话框导出 PNG |
 | 贴图 | 独立无装饰置顶窗口、按原始像素 1:1 显示、拖动移动、右键菜单（复制 / 保存为图片… / 关闭） |
 | 图片比较 | 与最后一张贴图对齐后逐像素比对，差异图另开窗口并给出一行结论 |
-| 常驻入口 | 状态栏右下角折叠区（`^`）里的托盘图标；左键面板提供「开始截图 / 退出」，不必去找任务栏图标 |
+| 常驻入口 | 状态栏右下角折叠区（`^`）里的托盘图标；左键面板提供「开始截图 / 退出」。图标由挂在状态栏项上的常驻进程持有，应用**没有窗口、也不占任务栏** |
 | 降级 | 未授权或截图失败 → 系统截图选择器 `screenshot.pick()`，把结果直接贴出 |
 
 平台做不到（每条都有实测证据，见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md)）：
-贴图不能浮在**其它应用**之上、任务栏图标去不掉、第三方没有全局快捷键、主窗口圆角去不掉。
+贴图不能浮在**其它应用**之上、托盘图标左键必然弹面板（点一下直接截图做不到）、第三方没有全局快捷键、主窗口圆角去不掉。
 
 ## 真值判据优先级
 
@@ -49,15 +49,16 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 把 hvigor 缓存限�
 
 ```powershell
 hdc install -r entry\build\default\outputs\default\entry-default-signed.hap   # 安装/更新
-hdc shell aa start -a EntryAbility -b com.youz.ohsnipaste                     # 触发一次截图（等同点任务栏图标）
+hdc shell aa start -a EntryAbility -b com.youz.ohsnipaste                     # 引导：注册托盘图标 + 拉起常驻进程（不截图）
 hdc shell aa force-stop com.youz.ohsnipaste                                   # 清场
 ```
 
-冷启动（`onCreate`）按设计**不截图**（此时系统启动窗口还在，截进去就是它），再激活一次才截。
-触发链路与静默期/去抖规则见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+冷启动只做引导：注册托盘图标 → 拉起常驻的 `TrayAbility` → 主 Ability 退出，此后应用没有任何窗口。
+截图一律从托盘面板的「开始截图」触发（`action=capture`）。触发链路与静默期/去抖规则见
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 日常用法是**状态栏托盘图标**：点右下角折叠区（`^`）里的图标 → 面板 → 「开始截图」；
-「退出」会摘掉图标并结束应用（图标只在进程存活期间存在）。
+「退出」会摘掉图标并结束应用（图标只在应用还有进程活着时存在）。
 
 ## 目录结构
 
@@ -92,7 +93,8 @@ entry/src/main/
 │   ├── entrybackupability/EntryBackupAbility.ets   # 系统备份扩展（模板自带）
 │   ├── tray/
 │   │   ├── TrayEntry.ets        # 状态栏托盘图标：注册 addToStatusBar / 摘除 removeFromStatusBar
-│   │   └── TrayStatusBarExt.ets # 托盘左键面板的 statusBarView 扩展（exported 必须 true）
+│   │   ├── TrayAbility.ets      # 挂在状态栏项上的常驻 Ability（STARTUP_HIDE，截图链路在这里）
+│   │   └── TrayStatusBarExt.ets # 托盘左键面板的 statusBarView 扩展
 │   └── pages/
 │       ├── Index.ets            # 空页面（启动窗口要等内容绘制完成才消失）
 │       ├── SelectionPage.ets    # 遮罩 + 框选 + 把手 + 放大镜 + 操作条
