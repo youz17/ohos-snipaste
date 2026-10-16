@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "ohsnipaste",
+  "version": "1.0.0",
+  "description": "Snipaste-like screenshot and paste-pin tool for HarmonyOS",
+  "dependencies": {},
+  "devDependencies": {}
+}

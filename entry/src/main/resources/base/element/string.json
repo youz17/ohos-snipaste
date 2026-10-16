@@ -1,0 +1,36 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "截图贴图主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "截图贴图"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "截图贴图"
+    },
+    {
+      "name": "PasteAbility_desc",
+      "value": "贴图窗口"
+    },
+    {
+      "name": "PasteAbility_label",
+      "value": "贴图"
+    },
+    {
+      "name": "SelectionAbility_desc",
+      "value": "区域截图选区窗口"
+    },
+    {
+      "name": "SelectionAbility_label",
+      "value": "区域截图"
+    },
+    {
+      "name": "reason_custom_screen_capture",
+      "value": "用于截取屏幕内容以进行区域截图与贴图"
+    }
+  ]
+}
