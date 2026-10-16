@@ -61,24 +61,29 @@ export default class EntryAbility extends UIAbility {
     this.shrinkToCorner(win);
   }
 
-  /** 缩到系统允许的最小尺寸（实测约 320x72vp），贴右下角、避开任务栏。 */
+  /**
+   * 缩到系统允许的最小尺寸、贴右下角，然后**最小化**：屏幕上看不到任何我们的常驻窗口。
+   * 注意单位不一致（实测踩过）：`resize` 收 vp，`moveWindowTo` 收 px，
+   * 之前两处都按 vp 传，结果窗口落在屏幕中间。
+   */
   private shrinkToCorner(win: window.Window): void {
     try {
-      const density: number = display.getDefaultDisplaySync().densityPixels;
-      const screenW: number = display.getDefaultDisplaySync().width / density;
-      const screenH: number = display.getDefaultDisplaySync().height / density;
-      const w: number = 320;
-      const h: number = 72;
-      const margin: number = 8;
-      // 任务栏/ dock 高约 46vp，留在它上方
-      win.resize(w, h).then(() => {
-        win.moveWindowTo(screenW - w - margin, screenH - 46 - h - margin)
-          .catch((err: BusinessError) => {
-            hilog.warn(DOMAIN, TAG, 'moveWindowTo failed: %{public}d %{public}s', err.code, err.message);
-          });
-      }).catch((err: BusinessError) => {
-        hilog.warn(DOMAIN, TAG, 'resize failed: %{public}d %{public}s', err.code, err.message);
-      });
+      const dpy = display.getDefaultDisplaySync();
+      const densityPx: number = dpy.densityPixels;
+      const wVp: number = 320;
+      const hVp: number = 72;
+      const marginPx: number = Math.round(8 * densityPx);
+      const dockPx: number = Math.round(46 * densityPx);
+      const xPx: number = Math.max(0, dpy.width - Math.round(wVp * densityPx) - marginPx);
+      const yPx: number = Math.max(0, dpy.height - dockPx - Math.round(hVp * densityPx) - marginPx);
+      hilog.info(DOMAIN, TAG, 'shrink to %{public}dx%{public}dvp at %{public}d,%{public}dpx',
+        wVp, hVp, xPx, yPx);
+      win.resize(wVp, hVp)
+        .then(() => win.moveWindowTo(xPx, yPx))
+        .then(() => win.minimize())
+        .catch((err: BusinessError) => {
+          hilog.warn(DOMAIN, TAG, 'shrinkToCorner failed: %{public}d %{public}s', err.code, err.message);
+        });
     } catch (err) {
       const e = err as BusinessError;
       hilog.warn(DOMAIN, TAG, 'shrinkToCorner failed: %{public}d %{public}s', e.code, e.message);

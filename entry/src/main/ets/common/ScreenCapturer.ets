@@ -24,6 +24,13 @@ export class ScreenCapturer {
   static async ensurePermission(context: common.UIAbilityContext): Promise<boolean> {
     const atManager = abilityAccessCtrl.createAtManager();
     try {
+      // 先查已有授权状态，避免"明明已授权却因为请求被拒而误判"
+      const tokenId: number = context.applicationInfo.accessTokenId;
+      const status: abilityAccessCtrl.GrantStatus = atManager.checkAccessTokenSync(tokenId, CAPTURE_PERMISSION);
+      if (status === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+        hilog.info(DOMAIN, TAG, '%{public}s', 'CUSTOM_SCREEN_CAPTURE already granted');
+        return true;
+      }
       const result = await atManager.requestPermissionsFromUser(context, [CAPTURE_PERMISSION]);
       const granted = result.authResults.length > 0 && result.authResults[0] === 0;
       hilog.info(DOMAIN, TAG, 'CUSTOM_SCREEN_CAPTURE granted=%{public}s', String(granted));
