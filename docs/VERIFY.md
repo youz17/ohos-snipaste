@@ -43,6 +43,10 @@ $py  = 'C:\Users\youz\workspace\scoop\apps\python\current\python.exe'   # 装了
 所以产物内容只能靠屏幕截图 + 像素分析验证。截图可直接用读图能力看，也可用
 Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期颜色）。
 
+本地取证产物放在 `.verify/`，该目录已被 `.gitignore` 忽略、**不入库**。因此结论不能只留在截图里：
+把关键日志行/坐标与截图文件名一起写进 L2 文档（[SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 的平台结论、
+[STATUS.md](STATUS.md) 的基线、[ARCHITECTURE.md](ARCHITECTURE.md) 的设计约束），截图只作为本地旁证。
+
 **窗口状态**（判断窗口是否可见、位置、层级）：
 
 ```powershell
@@ -59,6 +63,8 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
 1. **贴图窗口在别的窗口获得焦点后会 `ZOrd=-1`（被隐藏）**。若先点了桌面/别的应用再右键
    贴图，测的是"不可见窗口"，结论无效。正确顺序：先创建贴图，期间不点别处，再操作它。
 2. **选区窗口开着时再 `aa start` 不会再触发截图**：页面已可见，`onPageShow` 不重复触发。
+   > ⚠️ 待复核：这条是触发点还只有 `onPageShow` 时记录的；现行 `EntryAbility.onNewWant` 也会触发
+   > （见 [ARCHITECTURE.md](ARCHITECTURE.md) 触发链路），设备未连接未复跑，见 [STATUS.md](STATUS.md) 待办 1。
    要重新截图必须先让上一个选区结束（贴图/复制/保存/取消/Esc）。
 
 ## 还有两个坑
