@@ -39,9 +39,7 @@ export class CaptureFlow {
     CaptureFlow.busy = true;
     CaptureFlow.lastRunAt = now;
     try {
-      // 顺序要紧：先申请权限再最小化自己。反过来的话应用已进后台，权限请求会被直接拒掉。
       const granted: boolean = await ScreenCapturer.ensurePermission(ctx);
-      await CaptureFlow.hideSelfWindow(ctx);
       if (granted) {
         const shot: CaptureResult | undefined = await ScreenCapturer.captureScreen();
         if (shot !== undefined) {

@@ -62,9 +62,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   /**
-   * 缩到系统允许的最小尺寸、贴右下角，然后**最小化**：屏幕上看不到任何我们的常驻窗口。
-   * 注意单位不一致（实测踩过）：`resize` 收 vp，`moveWindowTo` 收 px，
-   * 之前两处都按 vp 传，结果窗口落在屏幕中间。
+   * 缩到系统最小尺寸、贴右下角，然后**最小化**：空闲时屏幕上不留任何我们的窗口。
+   * 注意单位不一致（实测踩过）：`resize` 收 vp，`moveWindowTo` 收 px。
+   * 也试过把窗口停到屏幕外，系统会夹住（请求 x=3135 实际落在 2784），所以不用。
    */
   private shrinkToCorner(win: window.Window): void {
     try {
@@ -76,7 +76,7 @@ export default class EntryAbility extends UIAbility {
       const dockPx: number = Math.round(46 * densityPx);
       const xPx: number = Math.max(0, dpy.width - Math.round(wVp * densityPx) - marginPx);
       const yPx: number = Math.max(0, dpy.height - dockPx - Math.round(hVp * densityPx) - marginPx);
-      hilog.info(DOMAIN, TAG, 'shrink to %{public}dx%{public}dvp at %{public}d,%{public}dpx',
+      hilog.info(DOMAIN, TAG, 'shrink+minimize %{public}dx%{public}dvp at %{public}d,%{public}dpx',
         wVp, hVp, xPx, yPx);
       win.resize(wVp, hVp)
         .then(() => win.moveWindowTo(xPx, yPx))
