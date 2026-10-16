@@ -10,7 +10,7 @@
 | 真机 | HAD-W32（HUAWEI MateBook Pro）；2026-10-16 实测 `const.ohos.apiversion=24`、`const.ohos.fullname=OpenHarmony-6.1.1.135`。本节早前记的 "HarmonyOS 7.0.0.23 / 设备 API 26" 与这台物理设备不符 —— 那台是何环境**未验证**（本机 `%LOCALAPPDATA%\Huawei\Emulator\deployed` 下有 "MateBook Pro" 镜像） |
 | 显示 | 3120x2080 px，1vp = 1.9px |
 | bundle | `com.youz.ohsnipaste` |
-| 代码基线 | `1862a6c`（其后 `6592110` 及之后仅改文档，代码未动） |
+| 代码基线 | `017a164`（其后仅改文档的提交不动代码；需要回溯用 `git log --follow`） |
 | 产物 | `entry/build/default/outputs/default/entry-default-signed.hap`（调试签名，`build-profile.json5` 已配置 `signingConfigs: default`） |
 | 真机连接 | 2026-10-16 已连接（`hdc list targets` → `3QC0124C16000565`）。注意调试签名 profile 的 `device-ids` 只登记了另一台 UDID，换设备后须在 DevEco 重新自动签名才能安装 |
 
