@@ -10,7 +10,7 @@
 | 真机 | HAD-W32 / HarmonyOS 7.0.0.23（设备 API 26） |
 | 显示 | 3120x2080 px，1vp = 1.9px |
 | bundle | `com.youz.ohsnipaste` |
-| 代码基线 | `master` @ `1862a6c`（文档分层重构这批改动尚未提交） |
+| 代码基线 | `1862a6c`（其后 `6592110` 及之后仅改文档，代码未动） |
 | 产物 | `entry/build/default/outputs/default/entry-default-signed.hap`（调试签名，`build-profile.json5` 已配置 `signingConfigs: default`） |
 | 真机连接 | 撰写本文时 `hdc list targets` 为空 → 下文的"待复核/待确认"项无法当场复跑 |
 
