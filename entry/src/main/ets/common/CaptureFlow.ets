@@ -33,7 +33,7 @@ export class CaptureFlow {
           // 否则比较功能按 pin_ 找基准时会找到刚截的整屏图
           const path: string = await PinStore.saveAsPng(shot.pixelMap, ctx.filesDir, 'shot');
           await Launcher.openSelection(ctx, path, shot.width, shot.height);
-          // 选区窗口已在前台，把主窗口收起来，避免透明窗口挡住桌面点击
+          // 选区窗口已在前台，把主窗口收起来：主窗口虽然不可见，但仍会吃掉它范围内的点击
           await CaptureFlow.hideSelfWindow(ctx);
           return;
         }

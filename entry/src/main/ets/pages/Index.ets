@@ -1,19 +1,16 @@
 import { common } from '@kit.AbilityKit';
-import { CaptureFlow } from '../common/CaptureFlow';
 
 /**
- * 入口页面：刻意不放任何界面元素。
- * 应用以"任务栏图标"的形式存在，被激活（onPageShow）就直接开始截图，
- * 用户全程只看到选区窗口和贴图窗口，看不到应用主窗口。
- * 另一条触发路径是全局快捷键（Ctrl+Shift+A），两条路共用 CaptureFlow。
+ * 空页面。它的唯一作用是让主窗口有内容可绘制 ——
+ * 系统的启动窗口（start window）要等窗口内容绘制完成才消失，
+ * 不加载页面的话启动窗口会一直挂在屏幕上。
+ *
+ * 这里刻意不写任何 onPageShow 触发逻辑：截图由 EntryAbility.onCreate / onNewWant 触发，
+ * 页面只负责"被画出来"（自身和窗口都是近全透明的）。
  */
 @Entry
 @Component
 struct Index {
-  onPageShow(): void {
-    CaptureFlow.run(this.getUIContext().getHostContext() as common.UIAbilityContext);
-  }
-
   build() {
     Column()
       .width('100%')

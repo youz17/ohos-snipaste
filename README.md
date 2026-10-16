@@ -177,6 +177,31 @@ ref anchor(2,0) | cur anchor(685,77) | offset(-683,-77)
 > 更正：本文件早前把"`inputConsumer` 零权限全局快捷键"列为候选，依据的是已从该 SDK 移除的
 > 老接口 `on('key')`，属于未查证就下的判断，现作废。
 
+## 激活时冒出一个"很大、纯色、无意义"的窗口
+
+现象：点任务栏图标触发截图时，屏幕上先冒出一个占满半个屏幕的浅色窗口，还会被截进冻结画面。
+
+两个成因，都实测确认：
+
+1. **启动窗口（start window）是纯白的**。`resources/base/element/color.json` 里
+   `start_window_background` 写的是 `#FFFFFF`，它是系统在窗口内容绘制前显示的启动窗口底色，
+   尺寸＝窗口尺寸。已改成 `#01000000`（近全透明）。
+2. 窗口内容必须存在：启动窗口**要等窗口内容绘制完成才消失**，所以 `onWindowStageCreate` 里
+   不能省 `loadContent`（试过完全不加载页面，结果启动窗口连同 `startWindowIcon` 一直挂在屏幕
+   中央不走）。正确做法是保留空页面，让窗口本身不可见 —— WMS 日志证实三项配置都生效：
+
+```
+WMSDecor: OnSetWindowDecorVisible: Window [718, ohsnipaste0] end
+WMSAttribute: OnSetWindowBackgroundColorSync: win=718, color=#01000000, retErr=0
+WMSAttribute: OnSetWindowShadowEnabled winId: 718, set enable: 0
+```
+
+另外：`startWindowIcon` 是 **schema 必填项**，删掉会让构建报 `Schema validate failed`。
+窗口虽然不可见，但仍会吃掉它范围内的点击，所以打开选区窗口后依旧要 `minimize()`。
+
+触发点也从页面的 `onPageShow` 挪到了 `EntryAbility.onCreate`（冷启动）与 `onNewWant`
+（应用已在运行时再被激活），页面只剩"被画出来"这一个职责，避免与两者重复触发。
+
 ## 第三轮反馈（3 项）
 
 
