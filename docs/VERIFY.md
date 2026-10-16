@@ -87,6 +87,26 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
 
 第 3 步必须有，第 1、2 步只能给"大概行不行"。
 
+> 续上：**第 1 步要先找对目录**。SDK 分成 `openharmony/` 与 `hms/` 两个分支，PC 桌面类能力
+> （`@hms.pcService.*`，如 `statusBarManager`）只在 `hms/ets/api` 下 —— 只搜 `openharmony/` 会得出
+> "平台没有这个能力"的错误结论（见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 证伪墓地 6）。
+
+## 状态栏托盘图标的验证手法
+
+1. 冷启动带 `statusBarView` 扩展的包（`aa start -a EntryAbility -b com.youz.ohsnipaste`），扩展里调
+   `statusBarManager.addToStatusBar`。
+2. 点状态栏右下角的 `^`：`uinput -M -g 2390 2015 2391 2015 80`（实测坐标，随分辨率/主题会变）。
+   它是**切换**语义，重复点会关掉面板 —— 每一步都先截图确认面板开着。
+3. 展开的面板里是各应用的状态栏插件图标（含 WPS 等三方应用）。**给自绘图标一个独有颜色**再数像素最稳：
+   例如"透明底 + 品红圆"，用 PIL 数 `(r>180)&(b>180)&(g<110)` —— 装上时 545 px、卸载后 0 px。
+4. 点图标：`uinput -M -g <iconX> <iconY> <iconX+1> <iconY> 80`。成功时日志依次出现
+   `StartUIExtension: element: .../<扩展名>` → `SBProbeExt: onSessionCreate -> loadContent` →
+   `AceUiExtensionComponent: StartUIExtension: pages/<页面>`。
+5. **别被 `1010710001 The size of the pixelmap exceeds the limit` 骗了**：它每次都打，图标照样渲染
+   （见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 3.3）。判成败只看第 4 步的日志与画面。
+6. 换设备安装前先看签名：`hdc shell bm get -u` 得到的 UDID 必须在该 `.p7b` 的 `device-ids` 里，
+   否则 `hdc install` 报 `9568423`。
+
 ## 典型验证序列
 
 ```powershell

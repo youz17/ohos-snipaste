@@ -1,7 +1,8 @@
 # ohos-snipaste — 协作与 AI 代理约定
 
 HarmonyOS NEXT（ArkTS / Stage 模型）上的 Snipaste 类截图贴图应用。
-真机：HAD-W32 / HarmonyOS 7.0.0.23（设备 API 26），显示 3120x2080px，1vp = 1.9px。
+真机：HAD-W32（HUAWEI MateBook Pro），3120x2080px。**系统版本 / API 等级 / 密度等基线值只记在
+[docs/STATUS.md](docs/STATUS.md)**，换设备或刷机后以那里为准。
 
 ## 硬性纪律
 
@@ -50,8 +51,9 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
 - 贴图窗口**不能浮在其它应用之上**（`WINDOW_TOPMOST` 只保证在本应用窗口之上）。
 - 贴图窗口四角有系统给的约 40px 圆角，`setWindowCornerRadius` 对主窗口直接报 1300004。
 - 图片比较的基点（第一个非背景像素）在框选位置变化后会失准。
-- 应用运行时任务栏必然有一个图标：`excludeFromDock: true` 已加但实测无效，第三方也无法往
-  时间/输入法那排（状态栏托盘）放图标。
+- 应用运行时任务栏必然有一个图标：`excludeFromDock: true` 已加但实测无效。
+- 状态栏托盘图标**可以做**（`statusBarManager.addToStatusBar` + `exported: true` 的 `statusBarView`
+  扩展，已真机实测），本项目尚未接入；细节与踩坑见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.3。
 - 第三方做不了全局快捷键：`inputConsumer.on('hotkeyChange')` 注册成功但按键不回调（它是"配置变更"
   通知），`on('keyPressed')` 文档限定前台；系统快捷键表只读、`shortcuts.json` 无键位字段。
 

@@ -84,7 +84,6 @@
 ### 3.1 运行时任务栏图标去不掉
 
 - 结论：`excludeFromDock: true` 三个 Ability 都已在 `module.json5`，且 `bm dump -n com.youz.ohsnipaste` 确认系统读到了该配置，但应用运行时任务栏**仍然多出我们的图标**（未运行 11 个 → 运行中 12 个，多出的最右蓝色四方格；force-stop 后消失）；干净卸载重装也无效。
-- 结论：SDK 里**没有**第三方可用的状态栏/托盘图标 API（`@ohos.window.d.ts` 连 "tray" 字样都没有；`excludeFromMissions` 标注 "For system application only"）。
 - 处置：配置保留（语义正确、无副作用，换新版本系统可能就生效），换系统版本后复测（见 [STATUS.md](STATUS.md) 开放待办）。
 - 证据：**实测** + **SDK**。
 
@@ -92,6 +91,19 @@
 
 - 结论：不是缺权限，是平台**没有暴露**。逐项反例见证伪墓地 1。
 - 现状：应用内没有快捷键唤起；相关探测代码已删除。
+
+### 3.3 状态栏托盘图标可以做（实测通过）
+
+- 结论：第三方应用能把图标放进状态栏右下角的折叠区（`^`），左键点击可拉起自绘面板。需要三件套：
+  1. `module.json5` 声明一个 `"type": "statusBarView"` 的 extensionAbility，**`exported` 必须为 `true`** —— 为 `false` 时系统起不来，只有 `AppMS: no ability or uiextension` 和一条 `HoverTips: getAppName ... appName:fail`；
+  2. 一个继承 `StatusBarViewExtensionAbility`（`@kit.DeskTopExtensionKit`）的类，在 `onSessionCreate` 里 `session.loadContent(<页面>)`，该页面要登记进 `main_pages.json`；
+  3. 运行期 `statusBarManager.addToStatusBar(context, item)`，`item.icons.white/black` 传 24×24 `RGBA_8888` PixelMap，`item.quickOperation` 指向上面那个扩展。
+- 系统侧证据：`PcAccessPluginComponent: ... "action":"action.systemui.plugin.STATUS_BAR","pluginPosition":"BOTTOM_RIGHT","pluginIconWidth":20,"pluginType":"message","bundleName":"com.youz.ohsnipaste"`；点击后依次 `StartUIExtension: element: com.youz.ohsnipaste/StatusBarProbeExt` → `ProcessMgr: startProcessName = com.youz.ohsnipaste:statusBarView` → `SBProbeExt: onSessionCreate -> loadContent` → `StartUIExtension: pages/StatusBarProbePage`，面板落在 `displayArea=RectT (2361,1483) - [687x456]`，扩展跑在独立进程 `com.youz.ohsnipaste:statusBarView`。
+- 图标渲染：自绘的"透明底 + 品红圆"24×24 按原样出现在折叠区；卸载应用后同一区域品红像素 545 → 0，证明图标确由该插件产生。
+- ⚠️ **误导日志**：每次调用 napi 层都打 `1010710001 The size of the pixelmap exceeds the limit`。实测 1×1、4×4、8×8、16×16、20×20、24×24、28×28、32×32、41×41、96×96、128×128，`editable` 取真取假，以及真实解码的 PNG，**全部照打**，而图标仍正常渲染 —— 不要拿这条日志判成败。
+- 证据：**实测**（2026-10-16，设备与系统基线见 [STATUS.md](STATUS.md)）。复现手法见 [VERIFY.md](VERIFY.md)。
+- ⚠️ **未解释的现象**：传**不透明**的纯色方块（24×24 纯青）时，折叠区里显示的是一个**黄色方块**而不是青色；换成"透明底 + 品红圆"后按原样显示。是否要求图标必须带透明通道，**未验证**。
+- 未测边界：右键菜单（`statusBarGroupMenu`）、`removeFromStatusBar`（其文档写明"没有前台窗口时不能删图标"）、`hoverTips` 文案。
 
 ## 4. 权限一览（本项目声明的三个）
 
@@ -115,6 +127,8 @@
 3. **「画中画 `@ohos.PiPWindow` 可以当贴图用」** —— 它要求 `XComponent` 视频面，不是贴静态图的路径。
 4. **「窗口四周留透明边距可以把圆角藏起来」** —— 主窗口画布不透明（2.4），会露出一圈灰框，已放弃。
 5. **「扫沙箱目录按文件名时间戳取最新贴图当比较基准」** —— 目录里同时躺着 `shot_*` / 历史 `pin_*` / `diff_*`，实测猜错过一次（拿刚截的 3120x2080 整屏图当了基准）→ 改为进程内登记（`common/PinRegistry.ets`）。
+6. **「第三方做不了状态栏托盘图标」** —— 依据只是通读了 `@ohos.window.d.ts`（里面确实没有 "tray" 字样），漏掉了 SDK 的 `hms` 分支：`@hms.pcService.statusBarManager` 根本不在 `openharmony` 目录下。
+   判别反例：2026-10-16 真机实测，`addToStatusBar` + `exported: true` 的 `statusBarView` 扩展在状态栏折叠区渲染出自绘图标，点击拉起扩展页（见本文 3.3）。
 
 ## 6. 候选方案与待决策
 
@@ -127,5 +141,6 @@
 | 5 | 比较入口 UX（贴图右键菜单加「设为比较基准」，或比较时弹列表选一张） | 目前只能跟"最后一张贴图"比 | 小 | 你 |
 | 6 | `ImageDiff` 单元测试 | 纯计算逻辑可脱离设备验证对齐与统计 | 小 | 你 |
 | 7 | 贴图窗口去掉按钮、能力收进右键菜单后，是否再留一个最小的可见操作入口 | 贴图窗口上现在没有任何可见按钮，新用户可能找不到菜单 | 小（会重新挡住一点图片） | 你 |
+| 8 | 状态栏托盘图标作常驻入口（图标 + 左键面板：截图 / 贴图 / 比较 / 退出） | 不必依赖任务栏图标，也不必依赖做不成的全局快捷键 | 中；需新增 `statusBarView` 扩展并置 `exported: true`，面板由 sceneboard 承载（见 3.3） | 你 |
 
-（未列入的候选：画中画、状态栏托盘图标 —— 已排除，理由见本文 2.2 与 3.1。）
+（未列入的候选：画中画 —— 已排除，理由见本文 2.2。）
