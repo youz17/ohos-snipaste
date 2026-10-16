@@ -41,8 +41,10 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
 - 贴图窗口**不能浮在其它应用之上**（`WINDOW_TOPMOST` 只保证在本应用窗口之上）。
 - 贴图窗口四角有系统给的约 40px 圆角，`setWindowCornerRadius` 对主窗口直接报 1300004。
 - 图片比较的基点（第一个非背景像素）在框选位置变化后会失准。
+- 应用运行时任务栏必然有一个图标：`excludeFromDock: true` 已加但实测无效，第三方也无法往
+  时间/输入法那排（状态栏托盘）放图标。
 
-三条的实测证据与候选方案见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+各条的实测证据与候选方案见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 文档索引
 

@@ -145,6 +145,19 @@ ref anchor(2,0) | cur anchor(685,77) | offset(-683,-77)
 | 用右键菜单关掉 B 后比较 | 只剩一个贴图窗口；`ref 600x400`（回退到 A） |
 | 差异图不参与登记 | 比较生成的 `diff_*` 窗口不计入基准 |
 
+## 第五轮反馈：不要窗口出现在任务栏（应像托盘图标一样）
+
+结论：**鸿蒙不给第三方应用这个能力**，两个方向都堵死，已实测。
+
+| 尝试 | 结果 |
+| --- | --- |
+| `"excludeFromDock": true`（三个 Ability 都加，语义是 "hide the application icon from the dock area"，schema 无 system-only 限制） | `bm dump -n com.youz.ohsnipaste` 确认系统已读到 `"excludeFromDock": true`，但应用运行时任务栏**仍然多出我们的图标**（未运行 11 个图标 → 运行中 12 个，多出的最右蓝色四方格就是我们的；force-stop 后消失）❌ |
+| 干净卸载重装（怀疑 dock 缓存旧任务条目） | 图标依旧 ❌ |
+| 往"时间/输入法图标那一排"（状态栏托盘）放图标 | 通读 SDK：**没有任何第三方可用 API**；`@ohos.window.d.ts` 里连 "tray" 字样都没有，只有 `UIAbility.d.ts` 一句注释提到"右键 dock bar / system tray 关闭 UIAbility"。`excludeFromMissions` 则明确写着 "For system application only" ❌ |
+
+也就是说 `excludeFromDock` 是唯一的官方开关，但在这台设备（HAD-W32 / HarmonyOS 7.0.0.23 / API 26）上不生效。
+配置保留在 `module.json5` 里（语义正确、无副作用，换新版本系统可能就生效了）。
+
 ## 第三轮反馈（3 项）
 
 

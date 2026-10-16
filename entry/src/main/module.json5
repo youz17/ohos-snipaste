@@ -40,6 +40,7 @@
         "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        "excludeFromDock": true,
         "skills": [
           {
             "entities": [
@@ -59,6 +60,7 @@
         "label": "$string:PasteAbility_label",
         "launchType": "multiton",
         "exported": false,
+        "excludeFromDock": true,
         "supportWindowMode": [
           "fullscreen",
           "split",
@@ -75,6 +77,7 @@
         "label": "$string:SelectionAbility_label",
         "launchType": "singleton",
         "exported": false,
+        "excludeFromDock": true,
         "supportWindowMode": [
           "fullscreen",
           "split",
