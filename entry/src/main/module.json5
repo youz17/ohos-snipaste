@@ -25,6 +25,9 @@
       },
       {
         "name": "ohos.permission.WINDOW_TOPMOST"
+      },
+      {
+        "name": "ohos.permission.SET_WINDOW_TRANSPARENT"
       }
     ],
     "abilities": [

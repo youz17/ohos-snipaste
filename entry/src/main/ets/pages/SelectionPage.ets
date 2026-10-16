@@ -6,6 +6,9 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Launcher } from '../common/Launcher';
 import { PinPayload } from '../common/PinPayload';
 import { PinStore } from '../common/PinStore';
+import { PinRegistry } from '../common/PinRegistry';
+import { ImageShare } from '../common/ImageShare';
+import { DiffResult, ImageDiff } from '../common/ImageDiff';
 
 const DOMAIN = 0x0000;
 const TAG = 'SelectionPage';
@@ -19,6 +22,26 @@ const MAG_SIZE: number = 120;
 const MAG_ZOOM: number = 4;
 /** 小于该边长（vp）视为误触，不生成贴图 */
 const MIN_SELECTION: number = 4;
+/** 操作条尺寸（vp）与它和选区边缘的间距：复制 / 保存 / 贴图 / 比较 / 取消 */
+const TOOLBAR_W: number = 356;
+const TOOLBAR_H: number = 36;
+const TOOLBAR_GAP: number = 8;
+/** 选区调整把手：边长与命中容差（vp） */
+const HANDLE_SIZE: number = 8;
+const HANDLE_HIT: number = 10;
+/** 触摸意图 */
+const MODE_IDLE: number = 0;
+const MODE_CREATE: number = 1;
+const MODE_MOVE: number = 2;
+const MODE_RESIZE: number = 3;
+/** 方向键 */
+const KEY_DPAD_UP: number = 2012;
+const KEY_DPAD_DOWN: number = 2013;
+const KEY_DPAD_LEFT: number = 2014;
+const KEY_DPAD_RIGHT: number = 2015;
+const KEY_SHIFT_LEFT: number = 2047;
+const KEY_SHIFT_RIGHT: number = 2048;
+const KEY_ESCAPE: number = 2070;
 
 /**
  * Snipaste 式区域选区：底图是截图那一刻冻结的屏幕画面，
@@ -47,6 +70,15 @@ struct SelectionPage {
   private preview: image.PixelMap | undefined = undefined;
   private startX: number = 0;
   private startY: number = 0;
+  /** 当前触摸意图：新建 / 移动 / 调整大小 */
+  private mode: number = MODE_IDLE;
+  private activeHandle: number = -1;
+  /** 按下瞬间的选区边界，移动与缩放都基于它算，避免逐帧累积误差 */
+  private snapLeft: number = 0;
+  private snapTop: number = 0;
+  private snapRight: number = 0;
+  private snapBottom: number = 0;
+  private shiftDown: boolean = false;
 
   private context(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -105,27 +137,151 @@ struct SelectionPage {
     return this.selWidth >= MIN_SELECTION && this.selHeight >= MIN_SELECTION;
   }
 
-  private beginSelection(x: number, y: number): void {
-    this.startX = this.clamp(x, 0, this.winWidth);
-    this.startY = this.clamp(y, 0, this.winHeight);
-    this.dragging = true;
-    this.selLeft = this.startX;
-    this.selTop = this.startY;
-    this.selWidth = 0;
-    this.selHeight = 0;
-    this.cursorX = this.startX;
-    this.cursorY = this.startY;
+  /** 8 个调整把手的位置 [left, top]：NW, N, NE, W, E, SW, S, SE */
+  private handlePoints(): number[][] {
+    const left: number = this.selLeft;
+    const top: number = this.selTop;
+    const right: number = this.selLeft + this.selWidth;
+    const bottom: number = this.selTop + this.selHeight;
+    const midX: number = (left + right) / 2;
+    const midY: number = (top + bottom) / 2;
+    return [
+      [left, top], [midX, top], [right, top],
+      [left, midY], [right, midY],
+      [left, bottom], [midX, bottom], [right, bottom]
+    ];
   }
 
-  private updateSelectionTo(curX: number, curY: number): void {
-    const x: number = this.clamp(curX, 0, this.winWidth);
-    const y: number = this.clamp(curY, 0, this.winHeight);
-    this.selLeft = Math.min(this.startX, x);
-    this.selTop = Math.min(this.startY, y);
-    this.selWidth = Math.abs(x - this.startX);
-    this.selHeight = Math.abs(y - this.startY);
-    this.cursorX = x;
-    this.cursorY = y;
+  /** 命中哪个把手（-1 表示没命中） */
+  private hitHandle(x: number, y: number): number {
+    if (!this.hasSelection()) {
+      return -1;
+    }
+    const points: number[][] = this.handlePoints();
+    for (let i = 0; i < points.length; i++) {
+      if (Math.abs(x - points[i][0]) <= HANDLE_HIT && Math.abs(y - points[i][1]) <= HANDLE_HIT) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * 按下：把手 → 调整大小；选区内 → 整体移动；选区外 → 重新框选。
+   * 这三种意图让"框完还能继续微调"。
+   */
+  private beginTouch(x: number, y: number): void {
+    const px: number = this.clamp(x, 0, this.winWidth);
+    const py: number = this.clamp(y, 0, this.winHeight);
+    this.cursorX = px;
+    this.cursorY = py;
+    this.startX = px;
+    this.startY = py;
+    this.dragging = true;
+    const handle: number = this.hitHandle(px, py);
+    if (handle >= 0) {
+      this.mode = MODE_RESIZE;
+      this.activeHandle = handle;
+    } else if (this.hasSelection() && px >= this.selLeft && px <= this.selLeft + this.selWidth &&
+      py >= this.selTop && py <= this.selTop + this.selHeight) {
+      this.mode = MODE_MOVE;
+    } else {
+      this.mode = MODE_CREATE;
+      this.selLeft = px;
+      this.selTop = py;
+      this.selWidth = 0;
+      this.selHeight = 0;
+    }
+    this.snapLeft = this.selLeft;
+    this.snapTop = this.selTop;
+    this.snapRight = this.selLeft + this.selWidth;
+    this.snapBottom = this.selTop + this.selHeight;
+  }
+
+  private updateTouch(x: number, y: number): void {
+    const px: number = this.clamp(x, 0, this.winWidth);
+    const py: number = this.clamp(y, 0, this.winHeight);
+    this.cursorX = px;
+    this.cursorY = py;
+    if (this.mode === MODE_CREATE) {
+      this.selLeft = Math.min(this.startX, px);
+      this.selTop = Math.min(this.startY, py);
+      this.selWidth = Math.abs(px - this.startX);
+      this.selHeight = Math.abs(py - this.startY);
+      return;
+    }
+    if (this.mode === MODE_MOVE) {
+      this.selLeft = this.clamp(this.snapLeft + (px - this.startX), 0, Math.max(0, this.winWidth - this.selWidth));
+      this.selTop = this.clamp(this.snapTop + (py - this.startY), 0, Math.max(0, this.winHeight - this.selHeight));
+      return;
+    }
+    if (this.mode === MODE_RESIZE) {
+      let left: number = this.snapLeft;
+      let top: number = this.snapTop;
+      let right: number = this.snapRight;
+      let bottom: number = this.snapBottom;
+      const h: number = this.activeHandle;
+      if (h === 0 || h === 3 || h === 5) {
+        left = this.clamp(px, 0, right - MIN_SELECTION);
+      }
+      if (h === 2 || h === 4 || h === 7) {
+        right = this.clamp(px, left + MIN_SELECTION, this.winWidth);
+      }
+      if (h === 0 || h === 1 || h === 2) {
+        top = this.clamp(py, 0, bottom - MIN_SELECTION);
+      }
+      if (h === 5 || h === 6 || h === 7) {
+        bottom = this.clamp(py, top + MIN_SELECTION, this.winHeight);
+      }
+      this.selLeft = left;
+      this.selTop = top;
+      this.selWidth = right - left;
+      this.selHeight = bottom - top;
+    }
+  }
+
+  /** 1 个图片像素对应多少 vp，方向键按图片像素微调 */
+  private stepVp(): number {
+    return this.imageWidth > 0 ? this.winWidth / this.imageWidth : 1;
+  }
+
+  /** 方向键：默认平移选区，按住 Shift 调整右/下边界，步长都是 1 个截图像素。 */
+  private handleKey(event: KeyEvent): void {
+    const code: number = event.keyCode;
+    if (code === KEY_SHIFT_LEFT || code === KEY_SHIFT_RIGHT) {
+      this.shiftDown = event.type === KeyType.Down;
+      return;
+    }
+    if (event.type !== KeyType.Down) {
+      return;
+    }
+    if (code === KEY_ESCAPE) {
+      this.cancel();
+      return;
+    }
+    if (!this.hasSelection()) {
+      return;
+    }
+    const d: number = this.stepVp();
+    if (this.shiftDown) {
+      if (code === KEY_DPAD_RIGHT || code === KEY_DPAD_LEFT) {
+        const grow: number = code === KEY_DPAD_RIGHT ? d : -d;
+        this.selWidth = this.clamp(this.selWidth + grow, MIN_SELECTION, this.winWidth - this.selLeft);
+      } else if (code === KEY_DPAD_DOWN || code === KEY_DPAD_UP) {
+        const grow: number = code === KEY_DPAD_DOWN ? d : -d;
+        this.selHeight = this.clamp(this.selHeight + grow, MIN_SELECTION, this.winHeight - this.selTop);
+      }
+      return;
+    }
+    if (code === KEY_DPAD_LEFT) {
+      this.selLeft = this.clamp(this.selLeft - d, 0, this.winWidth - this.selWidth);
+    } else if (code === KEY_DPAD_RIGHT) {
+      this.selLeft = this.clamp(this.selLeft + d, 0, this.winWidth - this.selWidth);
+    } else if (code === KEY_DPAD_UP) {
+      this.selTop = this.clamp(this.selTop - d, 0, this.winHeight - this.selHeight);
+    } else if (code === KEY_DPAD_DOWN) {
+      this.selTop = this.clamp(this.selTop + d, 0, this.winHeight - this.selHeight);
+    }
   }
 
   /** 按选区裁剪冻结截图，返回裁剪后的 PixelMap。 */
@@ -180,11 +336,118 @@ struct SelectionPage {
     this.context().terminateSelf();
   }
 
+  /** 常规复制：把选中的区域写进系统剪贴板。 */
+  private async copySelection(): Promise<void> {
+    if (this.busy) {
+      return;
+    }
+    this.busy = true;
+    try {
+      const pixelMap: image.PixelMap | undefined = await this.cropSelection();
+      if (pixelMap === undefined) {
+        this.getUIContext().getPromptAction().showToast({ message: '请先框选一块区域' });
+        return;
+      }
+      await ImageShare.copyToClipboard(pixelMap);
+      this.getUIContext().getPromptAction().showToast({ message: '已复制到剪贴板' });
+      this.context().terminateSelf();
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'copy failed: %{public}d %{public}s', e.code, e.message);
+      this.getUIContext().getPromptAction().showToast({ message: `复制失败：${e.message}` });
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** 常规保存：弹系统保存对话框写出 PNG。 */
+  private async saveSelection(): Promise<void> {
+    if (this.busy) {
+      return;
+    }
+    this.busy = true;
+    try {
+      const pixelMap: image.PixelMap | undefined = await this.cropSelection();
+      if (pixelMap === undefined) {
+        this.getUIContext().getPromptAction().showToast({ message: '请先框选一块区域' });
+        return;
+      }
+      const uri: string = await ImageShare.saveAs(this.context(), pixelMap, ImageShare.suggestedName());
+      if (uri.length === 0) {
+        return;
+      }
+      this.getUIContext().getPromptAction().showToast({ message: '已保存' });
+      this.context().terminateSelf();
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'save failed: %{public}d %{public}s', e.code, e.message);
+      this.getUIContext().getPromptAction().showToast({ message: `保存失败：${e.message}` });
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /**
+   * 与"上一张图片"（当前开着的最后一张贴图）比较：
+   * 两张图各自以左上角为背景色、找第一个非背景像素作基点对齐，再逐像素比对，
+   * 差异图作为新窗口展示。基准取自进程内登记，不扫沙箱目录。
+   */
+  private async compareWithPin(): Promise<void> {
+    if (this.busy) {
+      return;
+    }
+    this.busy = true;
+    try {
+      const pixelMap: image.PixelMap | undefined = await this.cropSelection();
+      if (pixelMap === undefined) {
+        this.getUIContext().getPromptAction().showToast({ message: '请先框选一块区域' });
+        return;
+      }
+      const pinPath: string = PinRegistry.latest();
+      if (pinPath.length === 0) {
+        this.getUIContext().getPromptAction().showToast({ message: '还没有贴图可以比较' });
+        return;
+      }
+      hilog.info(DOMAIN, TAG, 'compare with %{public}s (registry has %{public}d)',
+        pinPath, PinRegistry.count());
+      const reference: image.PixelMap = await PinStore.decode(pinPath);
+      const result: DiffResult = await ImageDiff.compare(reference, pixelMap);
+      await Launcher.pinPixelMap(this.context(), result.pixelMap, this.context().filesDir,
+        result.width, result.height, result.summary);
+      this.context().terminateSelf();
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'compare failed: %{public}d %{public}s', e.code, e.message);
+      this.getUIContext().getPromptAction().showToast({ message: `比较失败：${e.message}` });
+    } finally {
+      this.busy = false;
+    }
+  }
+
   /** 尺寸标签：显示裁剪后的真实像素尺寸 */
   private sizeLabel(): string {
     const width: number = this.toPixelX(this.selWidth);
     const height: number = this.toPixelY(this.selHeight);
     return `${width} × ${height}`;
+  }
+
+  /** 操作条贴着选区右下角放，放不下就翻到选区内部/上方。 */
+  private toolbarX(): number {
+    const rightAligned: number = this.selLeft + this.selWidth - TOOLBAR_W;
+    const maxX: number = Math.max(TOOLBAR_GAP, this.winWidth - TOOLBAR_W - TOOLBAR_GAP);
+    return Math.min(Math.max(rightAligned, TOOLBAR_GAP), maxX);
+  }
+
+  private toolbarY(): number {
+    const below: number = this.selTop + this.selHeight + TOOLBAR_GAP;
+    if (below + TOOLBAR_H <= this.winHeight - TOOLBAR_GAP) {
+      return below;
+    }
+    const inside: number = this.selTop + this.selHeight - TOOLBAR_H - TOOLBAR_GAP;
+    if (inside >= TOOLBAR_GAP) {
+      return inside;
+    }
+    return Math.min(this.selTop + TOOLBAR_GAP, Math.max(TOOLBAR_GAP, this.winHeight - TOOLBAR_H - TOOLBAR_GAP));
   }
 
   @Builder
@@ -248,11 +511,13 @@ struct SelectionPage {
           return;
         }
         if (event.type === TouchType.Down) {
-          this.beginSelection(touch.x, touch.y);
+          this.beginTouch(touch.x, touch.y);
         } else if (event.type === TouchType.Move && this.dragging) {
-          this.updateSelectionTo(touch.x, touch.y);
+          this.updateTouch(touch.x, touch.y);
         } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
           this.dragging = false;
+          this.mode = MODE_IDLE;
+          this.activeHandle = -1;
         }
       })
 
@@ -292,6 +557,17 @@ struct SelectionPage {
           .position({ x: this.selLeft, y: this.selTop })
           .hitTestBehavior(HitTestMode.None)
 
+        // 8 个调整把手：拖角/边可以继续改范围，拖选区内部可以整体挪动
+        ForEach(this.handlePoints(), (point: number[]) => {
+          Column()
+            .width(HANDLE_SIZE)
+            .height(HANDLE_SIZE)
+            .backgroundColor('#FFFFFF')
+            .border({ width: 1, color: FRAME_COLOR })
+            .position({ x: point[0] - HANDLE_SIZE / 2, y: point[1] - HANDLE_SIZE / 2 })
+            .hitTestBehavior(HitTestMode.None)
+        }, (point: number[]) => `${point[0]}_${point[1]}`)
+
         Text(this.sizeLabel())
           .fontSize(12)
           .fontColor('#FFFFFF')
@@ -307,26 +583,51 @@ struct SelectionPage {
           this.magnifier()
         }
 
-        Row({ space: 8 }) {
-          Button(`贴图 ${this.sizeLabel()}`)
+        Row({ space: 6 }) {
+          Button('复制')
             .fontSize(14)
-            .height(36)
+            .height(TOOLBAR_H)
+            .layoutWeight(1)
+            .enabled(!this.busy)
+            .onClick(() => {
+              this.copySelection();
+            })
+          Button('保存')
+            .fontSize(14)
+            .height(TOOLBAR_H)
+            .layoutWeight(1)
+            .enabled(!this.busy)
+            .onClick(() => {
+              this.saveSelection();
+            })
+          Button('贴图')
+            .fontSize(14)
+            .height(TOOLBAR_H)
+            .layoutWeight(1)
             .enabled(!this.busy)
             .onClick(() => {
               this.confirmPin();
             })
+          Button('比较')
+            .fontSize(14)
+            .height(TOOLBAR_H)
+            .layoutWeight(1)
+            .enabled(!this.busy)
+            .onClick(() => {
+              this.compareWithPin();
+            })
           Button('取消')
             .fontSize(14)
-            .height(36)
+            .height(TOOLBAR_H)
+            .layoutWeight(1)
             .backgroundColor('#666666')
             .onClick(() => {
               this.cancel();
             })
         }
-        .position({
-          x: Math.max(0, this.winWidth / 2 - 110),
-          y: Math.max(0, this.winHeight - 64)
-        })
+        .width(TOOLBAR_W)
+        .height(TOOLBAR_H)
+        .position({ x: this.toolbarX(), y: this.toolbarY() })
       } else {
         Column()
           .width('100%')
@@ -334,16 +635,30 @@ struct SelectionPage {
           .backgroundColor(MASK_COLOR)
           .hitTestBehavior(HitTestMode.None)
 
-        Text('拖拽框选区域，松开后点「贴图」')
+        Text('拖拽框选区域：拖角/边可继续调整，拖选区内部可整体移动，方向键微调，Shift+方向键改大小，Esc 退出')
           .fontSize(14)
           .fontColor('#FFFFFF')
           .backgroundColor('#CC000000')
           .padding(8)
-          .position({ x: Math.max(0, this.winWidth / 2 - 130), y: 40 })
+          .position({ x: Math.max(0, this.winWidth / 2 - 430), y: 40 })
           .hitTestBehavior(HitTestMode.None)
+
+        Button('取消')
+          .fontSize(14)
+          .height(TOOLBAR_H)
+          .backgroundColor('#666666')
+          .position({ x: this.winWidth - 120, y: 36 })
+          .onClick(() => {
+            this.cancel();
+          })
       }
     }
     .width('100%')
     .height('100%')
+    .focusable(true)
+    .defaultFocus(true)
+    .onKeyEvent((event: KeyEvent) => {
+      this.handleKey(event);
+    })
   }
 }

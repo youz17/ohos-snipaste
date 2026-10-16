@@ -8,26 +8,28 @@ import { PinStore } from '../common/PinStore';
 
 const DOMAIN = 0x0000;
 const TAG = 'Index';
-/** 清空界面后等待重绘，再做截图 */
-const BLANK_SETTLE_MS: number = 300;
 
+/**
+ * 入口页面：刻意不放任何界面元素。
+ * 应用以"任务栏图标"的形式存在，被激活（onPageShow）就直接开始截图，
+ * 用户全程只看到选区窗口和贴图窗口，看不到应用主窗口。
+ */
 @Entry
 @Component
 struct Index {
-  @State status: string = '就绪';
-  @State lastPinPath: string = '';
   @State busy: boolean = false;
-  /** 截图期间置为 true：界面清空，窗口透明，自己才不会出现在截图里 */
-  @State blank: boolean = false;
 
   private context(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
   }
 
+  onPageShow(): void {
+    this.captureAndPin();
+  }
+
   /**
-   * 主链路：申请权限 → 自身窗口透明化 → 截整屏 → 还原窗口 →
-   * 在冻结画面上框选 → 贴图。
-   * 无权限或整屏截图失败时降级为系统截图选择器，直接得到已选区域。
+   * 主链路：申请权限 → 截整屏（自身窗口已透明，不进截图）→
+   * 冻结画面里框选 → 贴图。失败时降级为系统截图选择器。
    */
   private async captureAndPin(): Promise<void> {
     if (this.busy) {
@@ -38,118 +40,51 @@ struct Index {
     try {
       const granted: boolean = await ScreenCapturer.ensurePermission(ctx);
       if (granted) {
-        this.status = '正在截图…';
-        await this.hideSelfWindow(ctx);
-        let shot: CaptureResult | undefined = undefined;
-        try {
-          shot = await ScreenCapturer.captureScreen();
-        } finally {
-          await this.showSelfWindow(ctx);
-        }
+        const shot: CaptureResult | undefined = await ScreenCapturer.captureScreen();
         if (shot !== undefined) {
-          const path: string = await PinStore.saveAsPng(shot.pixelMap, ctx.filesDir);
-          this.status = '请在冻结画面上拖拽框选区域';
+          // 前缀用 shot：冻结整屏图不能和"贴图"混在一起，
+          // 否则比较功能按 pin_ 找基准时会找到刚截的整屏图
+          const path: string = await PinStore.saveAsPng(shot.pixelMap, ctx.filesDir, 'shot');
           await Launcher.openSelection(ctx, path, shot.width, shot.height);
+          // 选区窗口已在前台，把主窗口收起来，避免透明窗口挡住桌面点击
+          await this.hideSelfWindow(ctx);
           return;
         }
       }
-
-      this.status = '改用系统截图选择器…';
-      const picked: CaptureResult | undefined = await ScreenCapturer.pickBySystem();
-      if (picked === undefined) {
-        this.status = '截图失败或被取消';
-        return;
-      }
-      this.lastPinPath = await Launcher.pinPixelMap(ctx, picked.pixelMap, ctx.filesDir,
-        picked.width, picked.height);
-      this.status = `已贴图 ${picked.width}×${picked.height}`;
+      await this.pickAndPin(ctx);
     } catch (err) {
       const e = err as BusinessError;
       hilog.error(DOMAIN, TAG, 'captureAndPin failed: %{public}d %{public}s', e.code, e.message);
-      this.status = `出错：${e.code} ${e.message}`;
     } finally {
       this.busy = false;
     }
   }
 
-  /**
-   * 让自身窗口从屏幕上"消失"：清空页面内容、去掉窗口装饰、把窗口背景设为全透明。
-   * 不使用 minimize()，因为最小化会让应用退到后台，而截图之后还要 startAbility
-   * 打开选区窗口，后台启动需要 system_basic 级的权限（实测报 201），且
-   * restore() 在最小化后返回 1300004 无法恢复。
-   */
+  /** 降级路径：系统截图选择器，无需权限，直接把选区结果贴出来。 */
+  private async pickAndPin(ctx: common.UIAbilityContext): Promise<void> {
+    const picked: CaptureResult | undefined = await ScreenCapturer.pickBySystem();
+    if (picked === undefined) {
+      hilog.warn(DOMAIN, TAG, '%{public}s', 'screenshot cancelled');
+      return;
+    }
+    await Launcher.pinPixelMap(ctx, picked.pixelMap, ctx.filesDir, picked.width, picked.height);
+  }
+
   private async hideSelfWindow(ctx: common.UIAbilityContext): Promise<void> {
-    this.blank = true;
     try {
       const win: window.Window = await window.getLastWindow(ctx);
-      win.setWindowDecorVisible(false);
-      win.setWindowBackgroundColor('#00000000');
+      await win.minimize();
+      hilog.info(DOMAIN, TAG, '%{public}s', 'main window hidden');
     } catch (err) {
       const e = err as BusinessError;
-      hilog.warn(DOMAIN, TAG, 'transparent self window failed: %{public}d %{public}s', e.code, e.message);
+      hilog.warn(DOMAIN, TAG, 'minimize failed: %{public}d %{public}s', e.code, e.message);
     }
-    await new Promise<void>((resolve: () => void) => {
-      setTimeout(() => resolve(), BLANK_SETTLE_MS);
-    });
-  }
-
-  /** 还原窗口外观。 */
-  private async showSelfWindow(ctx: common.UIAbilityContext): Promise<void> {
-    this.blank = false;
-    try {
-      const win: window.Window = await window.getLastWindow(ctx);
-      win.setWindowBackgroundColor('#FFFFFF');
-      win.setWindowDecorVisible(true);
-      hilog.info(DOMAIN, TAG, '%{public}s', 'self window restored');
-    } catch (err) {
-      const e = err as BusinessError;
-      hilog.warn(DOMAIN, TAG, 'restore self window failed: %{public}d %{public}s', e.code, e.message);
-    }
-  }
-
-  @Builder
-  mainPanel() {
-    Column({ space: 16 }) {
-      Text('截图贴图')
-        .fontSize(26)
-        .fontWeight(FontWeight.Bold)
-      Text('Snipaste 风格：截取屏幕 → 框选区域 → 贴图置顶悬浮')
-        .fontSize(14)
-        .fontColor('#666666')
-
-      Button(this.busy ? '处理中…' : '截取屏幕并贴图')
-        .width('100%')
-        .enabled(!this.busy)
-        .onClick(() => {
-          this.captureAndPin();
-        })
-
-      Text(this.status)
-        .fontSize(14)
-        .fontColor('#333333')
-        .textAlign(TextAlign.Center)
-
-      if (this.lastPinPath.length > 0) {
-        Text(`最近贴图：${this.lastPinPath}`)
-          .fontSize(12)
-          .fontColor('#999999')
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .padding(24)
-    .justifyContent(FlexAlign.Center)
   }
 
   build() {
-    Column() {
-      if (!this.blank) {
-        this.mainPanel()
-      }
-    }
-    .width('100%')
-    .height('100%')
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#01000000')
   }
 }

@@ -53,6 +53,9 @@ export default class SelectionAbility extends UIAbility {
       return win.maximize();
     }).then(() => {
       hilog.info(DOMAIN, TAG, '%{public}s', 'selection window fullscreen');
+      // 必须最后也置顶：贴图窗口是置顶的，否则已存在的贴图会盖住选区界面，
+      // 导致选区右下角的操作条被贴图挡住点不到。
+      return win.setWindowTopmost(true);
     }).catch((err: BusinessError) => {
       hilog.warn(DOMAIN, TAG, 'fullscreen failed: %{public}d %{public}s', err.code, err.message);
     });

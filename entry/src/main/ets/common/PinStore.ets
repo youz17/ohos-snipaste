@@ -10,8 +10,8 @@ export class PinStore {
    * 把 PixelMap 以 PNG 落盘到应用沙箱，返回绝对路径。
    * 贴图窗口是独立 Ability（可能与本页不同进程），用文件传递比内存对象可靠。
    */
-  static async saveAsPng(pixelMap: image.PixelMap, filesDir: string): Promise<string> {
-    const filePath: string = `${filesDir}/pin_${Date.now()}.png`;
+  static async saveAsPng(pixelMap: image.PixelMap, filesDir: string, prefix: string = 'pin'): Promise<string> {
+    const filePath: string = `${filesDir}/${prefix}_${Date.now()}.png`;
     const packer = image.createImagePacker();
     let file: fs.File | undefined = undefined;
     try {
@@ -36,7 +36,10 @@ export class PinStore {
     try {
       const source: image.ImageSource = image.createImageSource(file.fd);
       try {
-        const pixelMap: image.PixelMap = await source.createPixelMap();
+        // 固定要 RGBA_8888：图片比较要按 4 字节/像素直接读像素缓冲
+        const pixelMap: image.PixelMap = await source.createPixelMap({
+          desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+        });
         const info: image.ImageInfo = await pixelMap.getImageInfo();
         hilog.info(DOMAIN, TAG, 'decoded %{public}s: %{public}dx%{public}d',
           path, info.size.width, info.size.height);

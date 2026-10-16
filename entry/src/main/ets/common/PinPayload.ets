@@ -20,4 +20,13 @@ export class PinPayload {
   static load(windowId: number): string {
     return AppStorage.get<string>(PinPayload.key(windowId)) ?? '';
   }
+
+  /** 可选的说明文字（差异窗口用来显示比较结论）。 */
+  static saveNote(windowId: number, note: string): void {
+    AppStorage.setOrCreate(`pin_note_${windowId}`, note);
+  }
+
+  static loadNote(windowId: number): string {
+    return AppStorage.get<string>(`pin_note_${windowId}`) ?? '';
+  }
 }
