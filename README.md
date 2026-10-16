@@ -202,6 +202,16 @@ WMSAttribute: OnSetWindowShadowEnabled winId: 718, set enable: 0
 触发点也从页面的 `onPageShow` 挪到了 `EntryAbility.onCreate`（冷启动）与 `onNewWant`
 （应用已在运行时再被激活），页面只剩"被画出来"这一个职责，避免与两者重复触发。
 
+### 窗口位置/尺寸，以及"首次启动不截图"
+
+- 主窗口除了不可见，还**缩到系统最小尺寸并挪到右下角**（避开任务栏）。实测窗口 dump：
+  `ohsnipaste0 [ 1314 968 608 136 ]` —— 608x136px 就是这台机器的最小主窗口尺寸，位置正好贴右下。
+- **首次启动不截图**，按需求实现为「静默期 + 去抖」：`CaptureFlow` 忽略启动后 3 秒内的触发
+  （此时启动窗口还在、窗口刚配置完，截进去就是那个大窗口），并对同一波激活做 1.5 秒去抖
+  （onCreate / onNewWant / onPageShow 可能在几毫秒内连着命中）。实测：
+  `onCreate (首次启动不截图…)` → `skip: first launch (by design)`；
+  再激活 → `onNewWant -> capture`。
+
 ## 第三轮反馈（3 项）
 
 

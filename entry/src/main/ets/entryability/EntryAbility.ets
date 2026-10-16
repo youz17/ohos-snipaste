@@ -1,5 +1,5 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
-import { window } from '@kit.ArkUI';
+import { display, window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CaptureFlow } from '../common/CaptureFlow';
@@ -22,7 +22,7 @@ const TAG = 'EntryAbility';
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
-    hilog.info(DOMAIN, TAG, '%{public}s', 'onCreate -> capture');
+    hilog.info(DOMAIN, TAG, '%{public}s', 'onCreate (首次启动不截图，等下一次激活)');
     CaptureFlow.run(this.context);
   }
 
@@ -42,7 +42,10 @@ export default class EntryAbility extends UIAbility {
     });
   }
 
-  /** 主窗口不可见：去装饰、去阴影、背景近全透明。 */
+  /**
+   * 主窗口：不可见（去装饰、去阴影、背景近全透明），并且**缩到最小、挪到右下角**，
+   * 万一透明没生效也不会占着屏幕中间。
+   */
   private setupInvisibleWindow(windowStage: window.WindowStage): void {
     const win = windowStage.getMainWindowSync();
     try {
@@ -55,6 +58,31 @@ export default class EntryAbility extends UIAbility {
     win.setWindowShadowEnabled(false).catch((err: BusinessError) => {
       hilog.warn(DOMAIN, TAG, 'setWindowShadowEnabled failed: %{public}d %{public}s', err.code, err.message);
     });
+    this.shrinkToCorner(win);
+  }
+
+  /** 缩到系统允许的最小尺寸（实测约 320x72vp），贴右下角、避开任务栏。 */
+  private shrinkToCorner(win: window.Window): void {
+    try {
+      const density: number = display.getDefaultDisplaySync().densityPixels;
+      const screenW: number = display.getDefaultDisplaySync().width / density;
+      const screenH: number = display.getDefaultDisplaySync().height / density;
+      const w: number = 320;
+      const h: number = 72;
+      const margin: number = 8;
+      // 任务栏/ dock 高约 46vp，留在它上方
+      win.resize(w, h).then(() => {
+        win.moveWindowTo(screenW - w - margin, screenH - 46 - h - margin)
+          .catch((err: BusinessError) => {
+            hilog.warn(DOMAIN, TAG, 'moveWindowTo failed: %{public}d %{public}s', err.code, err.message);
+          });
+      }).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'resize failed: %{public}d %{public}s', err.code, err.message);
+      });
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'shrinkToCorner failed: %{public}d %{public}s', e.code, e.message);
+    }
   }
 
   onDestroy(): void {

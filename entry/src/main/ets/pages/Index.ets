@@ -1,16 +1,20 @@
 import { common } from '@kit.AbilityKit';
+import { CaptureFlow } from '../common/CaptureFlow';
 
 /**
- * 空页面。它的唯一作用是让主窗口有内容可绘制 ——
- * 系统的启动窗口（start window）要等窗口内容绘制完成才消失，
- * 不加载页面的话启动窗口会一直挂在屏幕上。
+ * 空页面：主窗口必须有内容可绘制，否则系统的启动窗口（start window）不会消失。
  *
- * 这里刻意不写任何 onPageShow 触发逻辑：截图由 EntryAbility.onCreate / onNewWant 触发，
- * 页面只负责"被画出来"（自身和窗口都是近全透明的）。
+ * 它同时是触发点之一：窗口被激活/恢复显示时 onPageShow 会回调。
+ * 冷启动那一次由 CaptureFlow 自己按时间跳过（"首次启动不截图，再点才截"），
+ * 所以这里直接调用即可，不必判断。
  */
 @Entry
 @Component
 struct Index {
+  onPageShow(): void {
+    CaptureFlow.run(this.getUIContext().getHostContext() as common.UIAbilityContext);
+  }
+
   build() {
     Column()
       .width('100%')

@@ -18,12 +18,26 @@ const TAG = 'CaptureFlow';
  */
 export class CaptureFlow {
   private static busy: boolean = false;
+  /** 类加载时刻≈应用启动时刻；这段时间内的触发一律忽略 */
+  private static readonly startedAt: number = Date.now();
+  private static lastRunAt: number = 0;
+  /** 首次启动的静默期：启动窗口还没消失、窗口也刚配置，此时截图会把它拍进去 */
+  private static readonly FIRST_LAUNCH_QUIET_MS: number = 3000;
+  /** 同一波激活可能同时命中 onCreate / onNewWant / onPageShow，去抖 */
+  private static readonly REPEAT_GUARD_MS: number = 1500;
 
   static async run(ctx: common.UIAbilityContext): Promise<void> {
-    if (CaptureFlow.busy) {
+    const now: number = Date.now();
+    if (now - CaptureFlow.startedAt < CaptureFlow.FIRST_LAUNCH_QUIET_MS) {
+      hilog.info(DOMAIN, TAG, '%{public}s', 'skip: first launch (by design)');
+      return;
+    }
+    if (CaptureFlow.busy || now - CaptureFlow.lastRunAt < CaptureFlow.REPEAT_GUARD_MS) {
+      hilog.info(DOMAIN, TAG, '%{public}s', 'skip: busy or too soon');
       return;
     }
     CaptureFlow.busy = true;
+    CaptureFlow.lastRunAt = now;
     try {
       const granted: boolean = await ScreenCapturer.ensurePermission(ctx);
       if (granted) {
