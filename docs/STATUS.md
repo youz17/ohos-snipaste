@@ -28,6 +28,7 @@
 | 复制 / 保存 | ✅ | `ImageShare: copied to clipboard`；保存弹系统对话框、默认名 `snipaste_20261016_124328.png` |
 | 比较 | ✅ | 同区域 `差异 0 px / 400000 px (0.00%)`；时钟区域 `差异 179 px / 27000 px (0.66%) · 区域 15×21 @(282,18)` |
 | 首次启动不截图 | ✅ | `onCreate` → `skip: first launch (by design)`；再激活 → `onNewWant -> capture` |
+| 状态栏托盘入口 | ✅ | `TrayEntry: tray icon registered`；折叠区出现线稿图标，点它 → `StartUIExtension: pages/TrayPanel`；面板内「开始截图」→ `CaptureFlow: main window hidden` → `SelectionPage ... shot_*.png`；「退出」→ `pidof` 为空、托盘插件数 8→7、图标槽位暗像素 309→0 |
 
 ## 模块健康度
 
@@ -40,6 +41,7 @@
 | 比较 | `common/ImageDiff.ets` + `common/PinRegistry.ets` | ⚠️ 算法按需求实现，基点在框选位置变化后失准（限制，见 SPEC-AND-TRUTH 候选 3） |
 | 分享 | `common/ImageShare.ets` | ✅ 剪贴板 + 系统保存对话框 |
 | 传值 / 落盘 | `common/PinPayload.ets`、`common/PinStore.ets` | ✅ 窗口 id + AppStorage；fd 解码，固定 RGBA_8888 |
+| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、左键面板（开始截图 / 退出）均真机跑通；⚠️ 面板冷启动约 2.4s |
 
 ## 开放待办（做完即删）
 
@@ -52,14 +54,13 @@
 5. 比较入口 UX（贴图右键菜单「设为比较基准」等）。
 6. `ImageDiff` 单元测试（纯计算，可脱离设备）。
 7. 换新版本系统后复测 `excludeFromDock`（本机实测无效，配置已保留）。
-8. 状态栏托盘图标常驻入口（可行性已实测，见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 候选 8）—— 待你定：做不做、面板里放哪几个动作。
 
 ## 已知限制（结论与证据在 SPEC-AND-TRUTH，本文不复制）
 
 - 贴图**不能浮在其它应用之上**（SPEC-AND-TRUTH 2.1 / 2.2）
 - 贴图窗口四角有系统给的约 40px 圆角（2.3 / 2.4）
 - 应用运行时任务栏必然有一个图标（SPEC-AND-TRUTH 3.1）
-- 状态栏托盘图标**可以**做（已实测，SPEC-AND-TRUTH 3.3）；本项目尚未接入
+- 托盘图标只在应用进程存活期间存在：平台没有给三方应用后台常驻服务，进程被杀或点面板「退出」后图标即消失（SPEC-AND-TRUTH 3.3）
 - 第三方做不了全局快捷键（3.2）
 - 图片比较的基点不稳健（候选 3）
 

@@ -3,6 +3,7 @@ import { display, window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CaptureFlow } from '../common/CaptureFlow';
+import { registerTray, unregisterTray } from '../tray/TrayEntry';
 
 const DOMAIN = 0x0000;
 const TAG = 'EntryAbility';
@@ -24,6 +25,7 @@ export default class EntryAbility extends UIAbility {
     this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     hilog.info(DOMAIN, TAG, '%{public}s', 'onCreate (首次启动不截图，等下一次激活)');
     CaptureFlow.run(this.context);
+    registerTray(this.context);
   }
 
   /** 应用还在运行时又被激活一次走这里。 */
@@ -91,6 +93,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
+    unregisterTray(this.context);
     hilog.info(DOMAIN, TAG, '%{public}s', 'onDestroy');
   }
 

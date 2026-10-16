@@ -103,6 +103,8 @@
 - ⚠️ **误导日志**：每次调用 napi 层都打 `1010710001 The size of the pixelmap exceeds the limit`。实测 1×1、4×4、8×8、16×16、20×20、24×24、28×28、32×32、41×41、96×96、128×128，`editable` 取真取假，以及真实解码的 PNG，**全部照打**，而图标仍正常渲染 —— 不要拿这条日志判成败。
 - 证据：**实测**（2026-10-16，设备与系统基线见 [STATUS.md](STATUS.md)）。复现手法见 [VERIFY.md](VERIFY.md)。
 - ⚠️ **未解释的现象**：传**不透明**的纯色方块（24×24 纯青）时，折叠区里显示的是一个**黄色方块**而不是青色；换成"透明底 + 品红圆"后按原样显示。是否要求图标必须带透明通道，**未验证**。
+- 图标来源：`icons.white/black` 只收 `PixelMap`，而 `image` 模块**不支持 SVG 解码**（SDK 里全无 svg 字样），所以 SVG 图形必须先离屏光栅化成 PNG 再打进包。
+- 面板加载耗时：面板由 sceneboard 拉起 UIExtension，实测**冷启动约 2.4s** 才出现（`onSessionCreate` → `StartUIExtension` → `RunPage`），且跑在独立进程 `<bundle>:statusBarView`。
 - 未测边界：右键菜单（`statusBarGroupMenu`）、`removeFromStatusBar`（其文档写明"没有前台窗口时不能删图标"）、`hoverTips` 文案。
 
 ## 4. 权限一览（本项目声明的三个）

@@ -1,7 +1,8 @@
 # 截图贴图（ohos-snipaste）
 
 HarmonyOS NEXT（ArkTS / Stage 模型）上的 Snipaste 类截图 + 贴图工具。
-真机：HAD-W32 / HarmonyOS 7.0.0.23（设备 API 26），显示 3120x2080px，1vp = 1.9px，bundle `com.youz.ohsnipaste`。
+真机：HAD-W32（HUAWEI MateBook Pro），3120x2080px，1vp = 1.9px，bundle `com.youz.ohsnipaste`；
+系统版本与 API 等级以 [docs/STATUS.md](docs/STATUS.md) 的基线为准。
 
 ## 能力边界
 
@@ -14,6 +15,7 @@ HarmonyOS NEXT（ArkTS / Stage 模型）上的 Snipaste 类截图 + 贴图工具
 | 复制 / 保存 | 写系统剪贴板 / 走系统保存对话框导出 PNG |
 | 贴图 | 独立无装饰置顶窗口、按原始像素 1:1 显示、拖动移动、右键菜单（复制 / 保存为图片… / 关闭） |
 | 图片比较 | 与最后一张贴图对齐后逐像素比对，差异图另开窗口并给出一行结论 |
+| 常驻入口 | 状态栏右下角折叠区（`^`）里的托盘图标；左键面板提供「开始截图 / 退出」，不必去找任务栏图标 |
 | 降级 | 未授权或截图失败 → 系统截图选择器 `screenshot.pick()`，把结果直接贴出 |
 
 平台做不到（每条都有实测证据，见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md)）：
@@ -54,6 +56,9 @@ hdc shell aa force-stop com.youz.ohsnipaste                                   # 
 冷启动（`onCreate`）按设计**不截图**（此时系统启动窗口还在，截进去就是它），再激活一次才截。
 触发链路与静默期/去抖规则见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
+日常用法是**状态栏托盘图标**：点右下角折叠区（`^`）里的图标 → 面板 → 「开始截图」；
+「退出」会摘掉图标并结束应用（图标只在进程存活期间存在）。
+
 ## 目录结构
 
 ```
@@ -70,7 +75,7 @@ ohos-snipaste/
     └── archive/HISTORY.md       # 多轮反馈的过程流水账（只增不改，默认不读）
 
 entry/src/main/
-├── module.json5                 # 三个 Ability + 权限声明（含 excludeFromDock）
+├── module.json5                 # 三个 Ability + statusBarView 扩展 + 权限声明（含 excludeFromDock）
 ├── ets/
 │   ├── common/
 │   │   ├── CaptureFlow.ets      # 入口编排：静默期/去抖、权限、截图、落盘、拉起窗口
@@ -85,11 +90,15 @@ entry/src/main/
 │   ├── selectionability/SelectionAbility.ets       # 全屏无装饰置顶的选区窗口
 │   ├── pasteability/PasteAbility.ets               # 每张贴图一个无装饰置顶窗口
 │   ├── entrybackupability/EntryBackupAbility.ets   # 系统备份扩展（模板自带）
+│   ├── tray/
+│   │   ├── TrayEntry.ets        # 状态栏托盘图标：注册 addToStatusBar / 摘除 removeFromStatusBar
+│   │   └── TrayStatusBarExt.ets # 托盘左键面板的 statusBarView 扩展（exported 必须 true）
 │   └── pages/
 │       ├── Index.ets            # 空页面（启动窗口要等内容绘制完成才消失）
 │       ├── SelectionPage.ets    # 遮罩 + 框选 + 把手 + 放大镜 + 操作条
-│       └── PastePage.ets        # 贴图内容 + 拖动 + 右键菜单
-└── resources/                   # 字符串/颜色/图标/profile（base 的 start_window_background 近全透明）
+│       ├── PastePage.ets        # 贴图内容 + 拖动 + 右键菜单
+│       └── TrayPanel.ets        # 托盘面板：开始截图 / 退出
+└── resources/                   # 字符串/颜色/图标/profile（托盘与面板图标是 SVG 离屏光栅化出的 PNG）
 ```
 
 ## 文档导航
@@ -97,7 +106,7 @@ entry/src/main/
 | 文档 | 内容 |
 | --- | --- |
 | [AGENTS.md](AGENTS.md) | 协作纪律、构建与验证命令、文档路由 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 三层 Ability 与触发链路、数据流、截图/比较算法、实现雷区 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Ability 与扩展、触发链路、数据流、截图/比较算法、实现雷区 |
 | [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) | 平台能力现行真值、证伪墓地、候选方案 |
 | [docs/STATUS.md](docs/STATUS.md) | 基线、已跑通环节、开放待办、待复核项 |
 | [docs/VERIFY.md](docs/VERIFY.md) | 真机驱动、取证、像素比对手法 |

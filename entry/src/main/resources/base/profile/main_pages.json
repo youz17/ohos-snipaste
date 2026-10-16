@@ -2,6 +2,7 @@
   "src": [
     "pages/Index",
     "pages/SelectionPage",
-    "pages/PastePage"
+    "pages/PastePage",
+    "pages/TrayPanel"
   ]
 }

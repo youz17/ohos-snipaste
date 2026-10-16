@@ -11,13 +11,14 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 不去抢系统悬浮窗，而是**先把整屏冻结成一张图**，再在普通窗口里自绘选区 —— 冻结画面不需要任何特权，
 选区窗口就是一个全屏普通窗口。
 
-## 三层 Ability
+## Ability 与扩展
 
-| Ability | 窗口形态 | 职责 |
+| Ability / 扩展 | 窗口形态 | 职责 |
 | --- | --- | --- |
-| `EntryAbility` | 主窗口**不可见**：去装饰 + 背景 `#01000000` + 去阴影，缩到系统最小尺寸（320x72vp）贴右下角后 `minimize()` | 入口与编排：接收激活事件，交给 `CaptureFlow` |
+| `EntryAbility` | 主窗口**不可见**：去装饰 + 背景 `#01000000` + 去阴影，缩到系统最小尺寸（320x72vp）贴右下角后 `minimize()` | 入口与编排：接收激活事件交给 `CaptureFlow`；冷启动注册状态栏托盘图标，`onDestroy` 摘掉 |
 | `SelectionAbility` | 全屏、无装饰、去标题按钮，`setWindowLayoutFullScreen` + `maximize()` 之后 `setWindowTopmost(true)`（singleton） | 铺冻结画面，自绘遮罩 / 选区 / 8 个把手 / 放大镜 / 操作条 |
 | `PasteAbility` | 每张图一个窗口，无装饰无阴影、`setWindowTopmost(true)`，尺寸 = 图片像素尺寸（multiton） | 显示贴图或差异图；拖动移动、右键菜单 |
+| `TrayStatusBarExt`（`type: statusBarView`，`exported: true`） | 无独立窗口；左键面板由 sceneboard 承载（页面 `pages/TrayPanel.ets`），跑在独立进程 `:statusBarView` | 托盘图标的左键面板：开始截图 / 退出 |
 
 入口页（`pages/Index.ets`）刻意没有任何界面元素，只有一层近全透明的 `Column`：它的存在是必须的
 （不 `loadContent` 的话系统启动窗口不会消失，见 SPEC-AND-TRUTH 2.7），但用户全程只看到选区窗口和贴图窗口。
@@ -31,6 +32,7 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 | `EntryAbility.onCreate` | 冷启动 |
 | `EntryAbility.onNewWant` | 应用已在运行时再被激活（例如再点一次任务栏图标） |
 | `Index.onPageShow` | 页面被显示/恢复时 |
+| 托盘面板的「开始截图」 | `startAbility(EntryAbility)` → 走上面 `onNewWant` 那条 |
 
 ```
 CaptureFlow.run(ctx)
@@ -48,6 +50,26 @@ CaptureFlow.run(ctx)
 
 顺序有硬约束：**必须先申请权限再收窗口** —— 反过来的话应用已进后台，权限请求会被直接拒掉
 （权限申请与窗口状态的交互记录见 SPEC-AND-TRUTH 1.4）。
+
+## 状态栏托盘入口
+
+常驻入口不靠全局快捷键（平台不给），也不靠任务栏图标（去不掉），而是状态栏折叠区里的自绘图标。
+
+```
+registerTray(ctx)                      EntryAbility.onCreate 调用
+  ├─ app.media.tray_icon_white / _black → PixelMap（image 模块不解 SVG，这两个是离屏光栅化好的 PNG）
+  └─ statusBarManager.addToStatusBar(ctx, item)，item.quickOperation → TrayStatusBarExt
+左键点图标 → sceneboard 拉起 TrayStatusBarExt（独立进程 com.youz.ohsnipaste:statusBarView）
+  └─ onSessionCreate → session.loadContent('pages/TrayPanel')
+       ├─ 开始截图 → startAbility(EntryAbility) → onNewWant → CaptureFlow
+       └─ 退出     → removeFromStatusBar + ApplicationContext.killAllProcesses(true)
+unregisterTray(ctx)                    EntryAbility.onDestroy 调用（无前台窗口时系统会拒绝，属预期）
+```
+
+图标是**离屏光栅化**产物：`image` 模块不支持 SVG 解码，所以 `screenshot-icon-line.svg` 用无头 Chrome
+渲染成 48×48 的黑/白两份（`media/tray_icon_black.png`、`media/tray_icon_white.png`，`icons.white`
+对应深色背景、`black` 对应浅色背景），彩色的 `screenshot-icon.svg` 渲染成 `media/panel_icon.png`
+（128×128）给面板当徽标。
 
 ## 数据流
 
@@ -146,3 +168,6 @@ PasteAbility（每张图一个）
 | 系统对主窗口有最小尺寸（约 608x136 px） | 贴图页用同图放大模糊铺底填补（`ImageFit.Cover` + `blur(40)`） |
 | `resize` 收 vp、`moveWindowTo` 收 px | 换算时显式乘 `densityPixels`（`entryability/EntryAbility.ets`） |
 | 启动窗口相关 | 必须 `loadContent`；`startWindowIcon` 是 schema 必填；底色见 SPEC-AND-TRUTH 2.7 |
+| `statusBarView` 扩展必须 `exported: true` | 否则系统起不来（日志只有 `no ability or uiextension`），点托盘图标毫无反应 |
+| `image` 模块解不了 SVG | 图形资源先离屏光栅化成 PNG 再打进包（`media/tray_icon_*.png`、`media/panel_icon.png`） |
+| 托盘面板是 UIExtension，冷启动约 2.4s | 面板要等 sceneboard 拉起 `:statusBarView` 进程才出现，验证时抢拍要等 ≥3s |
