@@ -7,11 +7,24 @@
         "material": {
           "certpath": "C:\\Users\\youz\\.ohos\\config\\default_ohos-snipaste_e5Xw0dDvp-hc1Db1_xqO_GRhwHyX1l0yqxG2eL02L8U=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B897E1BD77584B04FA4C514DEF55B729570D94165D245147EB4E59470D26CCAC4EE7C0854737383",
+          "keyPassword": "0000001B0E86FBE30E359613FD04E51169CDA8FABECD1C35E401EFA89EF0FE99D8CF957C996B1C81F73BD2",
           "profile": "C:\\Users\\youz\\.ohos\\config\\default_ohos-snipaste_e5Xw0dDvp-hc1Db1_xqO_GRhwHyX1l0yqxG2eL02L8U=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\youz\\.ohos\\config\\default_ohos-snipaste_e5Xw0dDvp-hc1Db1_xqO_GRhwHyX1l0yqxG2eL02L8U=.p12",
-          "storePassword": "0000001BEAD1C6BA5026981F3A55A1D6788F070442B8AC5E46D9A686220D343F40DF48582243B07C9C3058"
+          "storePassword": "0000001BB9E015AC2A22D20F1E128C52D6DF71FF2CB88DD9DA84DCD202717B98F66BAA66AE618C2B377290"
+        }
+      },
+      {
+        "name": "Release",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "D:/tools/ohos-snipaste/signing/ohos-snipaste.p12",
+          "storePassword": "00000019E49F2A856579773D4F20C8478326E3BBCD8988C9365E8BC8CCBBE9A344B076D57F0F068320",
+          "keyAlias": "snipaste",
+          "keyPassword": "0000001911FAFAFD2F77D46B105984F117FD4600DC12F5E3422E53FD6C96D34A0B5C3BD3A7369AFBEE",
+          "signAlg": "SHA256withECDSA",
+          "profile": "D:/tools/ohos-snipaste/signing/ohos-snipaste-发布Release.p7b",
+          "certpath": "D:/tools/ohos-snipaste/signing/ohos-snipaste-发布.cer"
         }
       }
     ],
@@ -19,6 +32,18 @@
       {
         "name": "default",
         "signingConfig": "default",
+        "compatibleSdkVersion": "6.0.1(21)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      },
+      {
+        "name": "release",
+        "signingConfig": "Release",
         "compatibleSdkVersion": "6.0.1(21)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
@@ -46,7 +71,8 @@
         {
           "name": "default",
           "applyToProducts": [
-            "default"
+            "default",
+            "release"
           ]
         }
       ]

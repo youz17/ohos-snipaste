@@ -20,14 +20,34 @@ export interface CaptureResult {
 }
 
 export class ScreenCapturer {
-  /** 申请截图权限；已授权时不会弹窗，直接返回 true。 */
+  /**
+   * 只查授权状态，不弹窗；任何能拿到 accessTokenId 的 context 都可以调。
+   *
+   * 判"能不能直接截屏"必须用它：`requestPermissionsFromUser` 只能由**有窗口**的 UIAbility 发起，
+   * 常驻的 `TrayAbility`（`STARTUP_HIDE`、无窗口）调它既不会弹窗也不会回调（实测卡死）。
+   */
+  static isGranted(context: common.UIAbilityContext): boolean {
+    try {
+      const atManager = abilityAccessCtrl.createAtManager();
+      const tokenId: number = context.applicationInfo.accessTokenId;
+      return atManager.checkAccessTokenSync(tokenId, CAPTURE_PERMISSION) ===
+        abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'checkAccessTokenSync failed: %{public}d %{public}s', e.code, e.message);
+      return false;
+    }
+  }
+
+  /**
+   * 申请截图权限；**只允许在带窗口的 Ability 里调**（欢迎窗口的「去授权」）。
+   * 已授权时不会弹窗，直接返回 true。
+   */
   static async ensurePermission(context: common.UIAbilityContext): Promise<boolean> {
     const atManager = abilityAccessCtrl.createAtManager();
     try {
       // 先查已有授权状态，避免"明明已授权却因为请求被拒而误判"
-      const tokenId: number = context.applicationInfo.accessTokenId;
-      const status: abilityAccessCtrl.GrantStatus = atManager.checkAccessTokenSync(tokenId, CAPTURE_PERMISSION);
-      if (status === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+      if (ScreenCapturer.isGranted(context)) {
         hilog.info(DOMAIN, TAG, '%{public}s', 'CUSTOM_SCREEN_CAPTURE already granted');
         return true;
       }

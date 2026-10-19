@@ -11,6 +11,7 @@ import {
   readHotkey,
   saveHotkey
 } from '../common/Hotkey';
+import { ScreenCapturer } from '../common/ScreenCapturer';
 import { HotkeyApplyResult, listenHotkeyResult, requestHotkeyChange } from '../tray/HotkeySignal';
 
 const DOMAIN = 0x0000;
@@ -35,6 +36,7 @@ struct Welcome {
   @State private hint: string = '';
   @State private hintOk: boolean = false;
   @State private busy: boolean = false;
+  @State private permissionGranted: boolean = false;
 
   /** 捕获过程中已按下的修饰键（不参与渲染，所以不做成 @State） */
   private pressed: number[] = [];
@@ -53,6 +55,7 @@ struct Welcome {
     this.combo = readHotkey(this.ctx());
     this.previous = this.combo;
     this.pending = this.combo;
+    this.permissionGranted = ScreenCapturer.isGranted(this.ctx());
     listenHotkeyResult((result: HotkeyApplyResult) => {
       if (!this.alive) {
         return;
@@ -138,6 +141,15 @@ struct Welcome {
       this.previous = combo;
       this.note('常驻进程未回执，新快捷键将在下次启动时生效');
     }, APPLY_TIMEOUT_MS);
+  }
+
+  /** 申请截屏权限。必须在这里发起：本窗口是唯一带窗口的 UIAbility，常驻进程申请不会弹窗。 */
+  private async askPermission(): Promise<void> {
+    this.busy = true;
+    const ok: boolean = await ScreenCapturer.ensurePermission(this.ctx());
+    this.busy = false;
+    this.permissionGranted = ok;
+    this.note(ok ? '截屏权限已授予' : '未授予：截图会退化为系统截图选择器', ok);
   }
 
   private handleKey(event: KeyEvent): boolean {
@@ -245,6 +257,43 @@ struct Welcome {
             .width('100%')
         }
         Text('在任何窗口下按下即开始截图：拖拽框选，然后在操作条上选 复制 / 保存 / 贴图 / 比较。')
+          .fontSize(12)
+          .fontColor('#4B5563')
+          .width('100%')
+          .lineHeight(18)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ top: 14, bottom: 14 })
+
+      Divider().color('#E5E7EB')
+
+      // 截屏权限：授权后快捷键是"整屏冻结 + 自绘框选"，未授权只能退化到系统选择器
+      Column({ space: 8 }) {
+        Text('截屏权限')
+          .fontSize(13)
+          .fontColor('#6B7280')
+          .width('100%')
+        Row({ space: 10 }) {
+          Text(this.permissionGranted ? '已授权：可直接整屏截图' : '未授权：只能走系统截图选择器')
+            .fontSize(14)
+            .fontColor(this.permissionGranted ? '#15803D' : '#B45309')
+            .layoutWeight(1)
+          Button(this.permissionGranted ? '已授权' : '去授权')
+            .type(ButtonType.Normal)
+            .height(32)
+            .fontSize(13)
+            .fontColor(Color.White)
+            .backgroundColor(this.permissionGranted ? '#9CA3AF' : '#2563EB')
+            .borderRadius(8)
+            .enabled(!this.permissionGranted && !this.busy)
+            .onClick(() => {
+              this.askPermission();
+            })
+        }
+        .width('100%')
+
+        Text('系统只允许"有窗口的应用"申请这个权限，所以必须在当前窗口里点一次「去授权」。')
           .fontSize(12)
           .fontColor('#4B5563')
           .width('100%')

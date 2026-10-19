@@ -40,7 +40,14 @@ export class CaptureFlow {
     CaptureFlow.busy = true;
     CaptureFlow.lastRunAt = now;
     try {
-      const granted: boolean = await ScreenCapturer.ensurePermission(ctx);
+      // 这里只**查**权限，不申请：常驻的 TrayAbility 没有窗口，requestPermissionsFromUser 既不会
+      // 弹窗也不会回调（promise 永久挂起，busy 卡死）。授权入口在欢迎窗口的「去授权」。
+      const granted: boolean = ScreenCapturer.isGranted(ctx);
+      if (!granted) {
+        hilog.info(DOMAIN, TAG, '%{public}s',
+          'screen capture not granted -> fallback to system picker (授权入口：托盘 → 使用说明)');
+      }
+      // 这里**不能** minimize：应用一进后台，后面的 startAbility 就报 201，选区窗口起不来
       if (granted) {
         const shot: CaptureResult | undefined = await ScreenCapturer.captureScreen();
         if (shot !== undefined) {

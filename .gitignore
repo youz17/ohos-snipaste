@@ -11,3 +11,8 @@
 **/.test
 /.appanalyzer
 .verify
+*.p7b
+/signing/
+*.p12
+*.cer
+/dist
