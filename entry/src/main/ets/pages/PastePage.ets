@@ -1,5 +1,5 @@
 import { common } from '@kit.AbilityKit';
-import { window } from '@kit.ArkUI';
+import { display, window } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -16,6 +16,11 @@ const TAG = 'PastePage';
  * alpha=1/255 视觉上不可见，但会真正参与绘制。
  */
 const NEARLY_TRANSPARENT: string = '#01000000';
+
+const KEY_DPAD_UP: number = 2012;
+const KEY_DPAD_DOWN: number = 2013;
+const KEY_DPAD_LEFT: number = 2014;
+const KEY_DPAD_RIGHT: number = 2015;
 
 /**
  * 贴图窗口内容：按原始像素 1:1 显示图片（窗口大小即图片大小）。
@@ -37,6 +42,13 @@ struct PastePage {
 
   private preview: image.PixelMap | undefined = undefined;
   private win: window.Window | undefined = undefined;
+  /** 方向键微调的目标落点（px），<0 表示需要回读真实位置；见 nudge() */
+  private nudgeX: number = -1;
+  private nudgeY: number = -1;
+  private winWidthPx: number = 0;
+  private winHeightPx: number = 0;
+  /** 在途的 moveWindowTo 数量：>0 时 nudgeX/nudgeY 比 windowRect 新，不能回读 */
+  private movesInFlight: number = 0;
 
   private context(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -91,6 +103,64 @@ struct PastePage {
     this.win.startMoving(offsetX, offsetY).catch((err: BusinessError) => {
       hilog.warn(DOMAIN, TAG, 'startMoving failed: %{public}d %{public}s', err.code, err.message);
     });
+  }
+
+  private clampPx(v: number, lo: number, hi: number): number {
+    return Math.min(Math.max(v, lo), Math.max(lo, hi));
+  }
+
+  /**
+   * 方向键微调窗口位置，一次 1 个屏幕像素（`moveWindowTo` 的单位是 px）。
+   *
+   * 基准取窗口真实位置（`windowRect`，拖动过之后自动跟上），但**只在没有在途移动时**回读：
+   * `moveWindowTo` 是异步的，连按方向键时回读到的是旧位置，几步会并成一步（同 2.8 的异步坑，
+   * 只是这里没有反馈环，不会抖）。
+   */
+  private nudge(dx: number, dy: number): void {
+    if (this.win === undefined) {
+      return;
+    }
+    if (this.movesInFlight === 0 || this.nudgeX < 0) {
+      const rect: window.Rect = this.win.getWindowProperties().windowRect;
+      this.nudgeX = rect.left;
+      this.nudgeY = rect.top;
+      this.winWidthPx = rect.width;
+      this.winHeightPx = rect.height;
+    }
+    const screen = display.getDefaultDisplaySync();
+    this.nudgeX = this.clampPx(this.nudgeX + dx, 0, screen.width - this.winWidthPx);
+    this.nudgeY = this.clampPx(this.nudgeY + dy, 0, screen.height - this.winHeightPx);
+    this.movesInFlight++;
+    this.win.moveWindowTo(this.nudgeX, this.nudgeY).then(() => {
+      this.movesInFlight--;
+    }).catch((err: BusinessError) => {
+      this.movesInFlight--;
+      this.nudgeX = -1;
+      hilog.warn(DOMAIN, TAG, 'nudge moveWindowTo failed: %{public}d %{public}s', err.code, err.message);
+    });
+  }
+
+  /** 方向键：一次 1 像素微调位置。 */
+  private handleKey(event: KeyEvent): void {
+    if (event.type !== KeyType.Down) {
+      return;
+    }
+    switch (event.keyCode) {
+      case KEY_DPAD_LEFT:
+        this.nudge(-1, 0);
+        break;
+      case KEY_DPAD_RIGHT:
+        this.nudge(1, 0);
+        break;
+      case KEY_DPAD_UP:
+        this.nudge(0, -1);
+        break;
+      case KEY_DPAD_DOWN:
+        this.nudge(0, 1);
+        break;
+      default:
+        break;
+    }
   }
 
   private async copyToClipboard(): Promise<void> {
@@ -212,5 +282,9 @@ struct PastePage {
     })
     .bindContextMenu(this.pinMenu(), ResponseType.RightClick)
     .focusable(true)
+    .defaultFocus(true)
+    .onKeyEvent((event: KeyEvent) => {
+      this.handleKey(event);
+    })
   }
 }

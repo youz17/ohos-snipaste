@@ -24,7 +24,7 @@
 | 选区窗口全屏 | ✅ | dump `ohsnipaste1 [0,0,3120,2080]` |
 | 框选精度 | ✅ | 按 (800,400) 松 (1800,1000) → `crop x=800 y=400 1000x600` |
 | 裁剪 + 落盘 | ✅ | `PinStore: saved ...` / `decoded ...: 1000x600` |
-| 贴图窗口 | ✅ | `pin window 1000x600 for image 1000x600`；无边框、右键菜单可用；拖动改由 `win.startMoving` 接管（2026-10-19 实测：慢拖 +400,+300 → 窗口 `560,460`、快拖 +600,+400 → `1160,860`、微拖 +30,+30 → `1190,890`，全部 1:1 且无过冲；松手后只移动光标窗口不动；右键弹出菜单时窗口不动） |
+| 贴图窗口 | ✅ | `pin window 1000x600 for image 1000x600`；无边框、右键菜单可用；拖动改由 `win.startMoving` 接管（2026-10-19 实测：慢拖 +400,+300 → 窗口 `560,460`、快拖 +600,+400 → `1160,860`、微拖 +30,+30 → `1190,890`，全部 1:1 且无过冲；松手后只移动光标窗口不动；右键弹出菜单时窗口不动）；方向键微调 1px（2026-10-19 实测 `[160,160]` → 右 `161` / 下 `161`、连按 5 次右 → `167`、拖到 `267` 后再按 → `268`、连按 12 次左被夹在 `x=0`，且框选生成的贴图窗口**获得焦点后无需先点击**即可微调） |
 | 复制 / 保存 | ✅ | `ImageShare: copied to clipboard`；保存弹系统对话框、默认名 `snipaste_20261016_124328.png` |
 | 比较 | ✅ | 同区域 `差异 0 px / 400000 px (0.00%)`；时钟区域 `差异 179 px / 27000 px (0.66%) · 区域 15×21 @(282,18)` |
 | 首次启动不截图 | ✅ | 引导只注册托盘与拉起常驻进程，不截图；截图统一由托盘面板的「开始截图」（公共事件）触发 |
@@ -40,7 +40,7 @@
 | 入口编排 | `common/CaptureFlow.ets` | ✅ 静默期 / 去抖 / busy 防重 / pick 降级齐备；⚠️ 截图前 `minimize()` 的顺序待复核（待办 1）。`hideSelfWindow()` 现在只对着一个不存在的窗口调用（实测不会误伤同应用的贴图窗口：贴图窗口 ZOrd 全程 `113`） |
 | 截图 | `common/ScreenCapturer.ets` | ✅ 无参 `capture()` + `pick()` 降级；带参 `capture()` 这条路已走死 |
 | 选区 | `pages/SelectionPage.ets` + `selectionability/` | ✅ 框选 / 8 把手 / 4× 放大镜 / 方向键 / 5 个操作条动作 |
-| 贴图 | `pages/PastePage.ets` + `pasteability/` | ✅ 1:1 显示、系统接管拖动（`window.startMoving`，见 SPEC-AND-TRUTH 2.8）、右键菜单；置顶范围与圆角是平台限制（非缺陷）；⚠️ 拖到屏幕边缘会被系统吸附成半屏（候选 9） |
+| 贴图 | `pages/PastePage.ets` + `pasteability/` | ✅ 1:1 显示、系统接管拖动（`window.startMoving`，见 SPEC-AND-TRUTH 2.8）、方向键 1 像素微调、右键菜单；置顶范围与圆角是平台限制（非缺陷）；⚠️ 拖到屏幕边缘会被系统吸附成半屏（候选 9） |
 | 比较 | `common/ImageDiff.ets` + `common/PinRegistry.ets` | ⚠️ 算法按需求实现，基点在框选位置变化后失准（限制，见 SPEC-AND-TRUTH 候选 3） |
 | 分享 | `common/ImageShare.ets` | ✅ 剪贴板 + 系统保存对话框 |
 | 传值 / 落盘 | `common/PinPayload.ets`、`common/PinStore.ets` | ✅ 窗口 id + AppStorage；fd 解码，固定 RGBA_8888 |

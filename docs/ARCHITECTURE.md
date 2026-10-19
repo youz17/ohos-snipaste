@@ -18,7 +18,7 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 | `EntryAbility` | 只借系统的启动窗口，**不加载任何内容**；引导结束即 `terminateSelf` | 引导：注册托盘图标 → 拉起 `TrayAbility` → 确认它起来后退出。之后应用**没有任何窗口**，任务栏也就不占位 |
 | `TrayAbility` | **没有窗口**：`STARTUP_HIDE` 挂到状态栏项上、**不 `loadContent`**，跑在独立进程 `...:entry:TrayAbility:0` | 常驻载体：托盘图标活在这个进程里；订阅跨进程信号（`tray/CaptureSignal.ets`）跑 `CaptureFlow` |
 | `SelectionAbility` | 全屏、无装饰、去标题按钮，`setWindowLayoutFullScreen` + `maximize()` 之后 `setWindowTopmost(true)`（singleton） | 铺冻结画面，自绘遮罩 / 选区 / 8 个把手 / 放大镜 / 操作条 |
-| `PasteAbility` | 每张图一个窗口，无装饰无阴影、`setWindowTopmost(true)`，尺寸 = 图片像素尺寸（multiton） | 显示贴图或差异图；拖动移动、右键菜单 |
+| `PasteAbility` | 每张图一个窗口，无装饰无阴影、`setWindowTopmost(true)`，尺寸 = 图片像素尺寸（multiton） | 显示贴图或差异图；拖动移动、方向键微调、右键菜单 |
 | `TrayStatusBarExt`（`type: statusBarView`，`exported: true`） | 无独立窗口；左键面板由 sceneboard 承载（页面 `pages/TrayPanel.ets`），跑在独立进程 `:statusBarView` | 托盘图标的左键面板：开始截图 / 退出 |
 
 入口页（`pages/Index.ets`）已删除：两个 Ability 都不需要承载内容 —— `EntryAbility` 引导完就退出，
@@ -96,6 +96,7 @@ SelectionPage（全屏）
 PasteAbility（每张图一个）
   └─ 同样用窗口 id 取回路径 + 备注文字（note 给差异窗口显示结论）
   └─ 窗口尺寸 = min(图片像素尺寸, 屏幕尺寸)，页面按 px2vp 反算 1:1 显示
+  └─ 方向键：窗口位置 ±1px（`nudge`，基准取真实位置；拖到屏幕外会被夹在屏幕内）
   └─ 右键菜单：复制 / 保存为图片… / 关闭（关闭时 PinRegistry.remove）
 ```
 
@@ -172,6 +173,7 @@ PasteAbility（每张图一个）
 | `@Builder` 按值传参不具备刷新能力 | 会随选区变化的覆盖层直接写进 `build()`（遮罩四块） |
 | `PanGesture` 约 5vp 激活阈值 | 选区用 `onTouch`，并给覆盖层加 `HitTestMode.None` |
 | 拖动无装饰贴图窗口别自己算 | 在 `onTouch` 的 `TouchType.Down` 里调 `win.startMoving(vp2px(touch.x), vp2px(touch.y))`，由窗口管理器接管光标跟随（`pages/PastePage.ets`）。自己用 `moveWindowTo` 做增量闭环会因异步延迟正反馈震荡 → 抖，见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 2.8 |
+| 方向键微调贴图位置别每次回读 `windowRect` | `moveWindowTo` 异步生效，连按方向键时回读到的是旧位置，几步会并成一步。做法（`pages/PastePage.ets` 的 `nudge`）：没有在途移动时才回读真实矩形当基准，有在途移动就按"上次目标 + 本次增量"累加；移动失败则把基准作废、下次重新回读 |
 | `TouchObject` 的 `screenX/screenY` 已废弃（since 10，等于 `windowX/windowY`，窗口相对） | 窗口内位置用 `x/y` 或 `windowX/windowY`，屏幕绝对位置用 `displayX/displayY` —— **都是 vp** |
 | 图片用沙箱路径交给 `Image()` 可能不显示 | `fileIo` 打开 fd → `image.createImageSource(fd)`，解码要 `RGBA_8888` |
 | `bundleName` 不要硬编码 | 用 `context.abilityInfo.bundleName` |
