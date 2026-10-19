@@ -5,7 +5,9 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { inputConsumer } from '@kit.InputKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CaptureFlow } from '../common/CaptureFlow';
+import { DEFAULT_HOTKEY, HotkeyCombo, hotkeyLabel, readHotkey } from '../common/Hotkey';
 import { listenCapture } from './CaptureSignal';
+import { HotkeyChangeParams, listenHotkeyChange, reportHotkeyResult } from './HotkeySignal';
 
 const DOMAIN = 0x0000;
 const TAG = 'TrayAbility';
@@ -31,19 +33,6 @@ export const READY_MARKER = 'tray-ready';
 const PANEL_SETTLE_MS = 500;
 
 /**
- * 截图快捷键：Ctrl+Shift+A（2072 = KEYCODE_CTRL_LEFT，2047 = KEYCODE_SHIFT_LEFT，2017 = KEYCODE_A）。
- *
- * `inputConsumer.on('hotkeyChange')` 是**全局**快捷键：官方参考页标题即「全局快捷键」，接口描述是
- * "订阅应用快捷键，获取满足条件的组合按键输入事件"，无权限要求、无前台限定（SDK 注释里的 "change"
- * 是措辞误导）。真机实测：注册在常驻进程、应用没有任何窗口、焦点在别的会话时按下仍回调。
- *
- * 修饰键必填（`preKeys` 至少一个），所以做不出 Snipaste 那种裸 F1。
- * 订阅是**排他**的：系统已占用报 4200002，别的应用已占用报 4200003 —— 同一组合全局只归一家，
- * 因此换键位时先看日志里是否报这两个码。
- */
-const HOTKEY: inputConsumer.HotkeyOptions = { preKeys: [2072, 2047], finalKey: 2017, isRepeat: false };
-
-/**
  * 常驻 Ability：托盘的载体。
  *
  * 由 EntryAbility 以 `processMode: NEW_PROCESS_ATTACH_TO_STATUS_BAR_ITEM` +
@@ -59,24 +48,89 @@ const HOTKEY: inputConsumer.HotkeyOptions = { preKeys: [2072, 2047], finalKey: 2
  * 全局快捷键则在 `onCreate` 里一次注册，按键回调直接走同一条 CaptureFlow。
  */
 export default class TrayAbility extends UIAbility {
+  /** 当前已注册的组合。改键时要按**同一个对象** off，所以留引用。 */
+  private current: inputConsumer.HotkeyOptions = TrayAbility.optionsOf(DEFAULT_HOTKEY);
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'onCreate (resident, no window to show)');
     this.registerHotkey();
     listenCapture(() => {
       this.capture(PANEL_SETTLE_MS);
     });
+    listenHotkeyChange((params: HotkeyChangeParams) => {
+      this.applyHotkey(params);
+    });
   }
 
+  private static optionsOf(combo: HotkeyCombo): inputConsumer.HotkeyOptions {
+    return { preKeys: combo.preKeys.slice(), finalKey: combo.finalKey, isRepeat: false };
+  }
+
+  /**
+   * 按设置注册截图快捷键（默认 Ctrl+Shift+A：2072 = KEYCODE_CTRL_LEFT，2047 = KEYCODE_SHIFT_LEFT，
+   * 2017 = KEYCODE_A；实际组合存在 `common/Hotkey.ets`，欢迎窗口里可改）。
+   *
+   * `inputConsumer.on('hotkeyChange')` 是**全局**快捷键：官方参考页标题即「全局快捷键」，接口描述是
+   * "订阅应用快捷键，获取满足条件的组合按键输入事件"，无权限要求、无前台限定（SDK 注释里的 "change"
+   * 是措辞误导）。真机实测：注册在常驻进程、应用没有任何窗口、焦点在别的会话时按下仍回调。
+   *
+   * 修饰键必填（`preKeys` 至少一个），所以做不出 Snipaste 那种裸 F1。
+   * 订阅是**排他**的：系统已占用报 4200002，别的应用已占用报 4200003 —— 同一组合全局只归一家，
+   * 因此换键位时先看日志里是否报这两个码（改键失败会回滚并回报给欢迎窗口）。
+   */
   private registerHotkey(): void {
+    const combo: HotkeyCombo = readHotkey(this.context);
+    const opts: inputConsumer.HotkeyOptions = TrayAbility.optionsOf(combo);
     try {
-      inputConsumer.on('hotkeyChange', HOTKEY, (opts: inputConsumer.HotkeyOptions) => {
-        hilog.info(DOMAIN, TAG, 'hotkey fired %{public}s', JSON.stringify(opts));
+      inputConsumer.on('hotkeyChange', opts, (fired: inputConsumer.HotkeyOptions) => {
+        hilog.info(DOMAIN, TAG, 'hotkey fired %{public}s', JSON.stringify(fired));
         this.capture(0);
       });
-      hilog.info(DOMAIN, TAG, '%{public}s', 'hotkey registered: Ctrl+Shift+A');
+      this.current = opts;
+      hilog.info(DOMAIN, TAG, 'hotkey registered: %{public}s', hotkeyLabel(combo));
     } catch (err) {
       const e = err as BusinessError;
       hilog.error(DOMAIN, TAG, 'hotkey register failed: %{public}d %{public}s', e.code, e.message);
+    }
+  }
+
+  /**
+   * 欢迎窗口请求改键：先按旧对象 off，再注册新组合；新组合被占用（4200002 / 4200003）时
+   * 把旧组合装回去，并回报给窗口让它回滚设置。
+   */
+  private applyHotkey(params: HotkeyChangeParams): void {
+    const combo: HotkeyCombo = { preKeys: params.preKeys, finalKey: params.finalKey };
+    const next: inputConsumer.HotkeyOptions = TrayAbility.optionsOf(combo);
+    const previous: inputConsumer.HotkeyOptions = this.current;
+    try {
+      inputConsumer.off('hotkeyChange', previous);
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, TAG, 'hotkey off failed: %{public}d %{public}s', e.code, e.message);
+    }
+    try {
+      inputConsumer.on('hotkeyChange', next, (fired: inputConsumer.HotkeyOptions) => {
+        hilog.info(DOMAIN, TAG, 'hotkey fired %{public}s', JSON.stringify(fired));
+        this.capture(0);
+      });
+      this.current = next;
+      hilog.info(DOMAIN, TAG, 'hotkey re-registered: %{public}s', hotkeyLabel(combo));
+      reportHotkeyResult(true, 0);
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'hotkey re-register failed: %{public}d %{public}s (restore previous)',
+        e.code, e.message);
+      try {
+        inputConsumer.on('hotkeyChange', previous, (fired: inputConsumer.HotkeyOptions) => {
+          hilog.info(DOMAIN, TAG, 'hotkey fired %{public}s', JSON.stringify(fired));
+          this.capture(0);
+        });
+        this.current = previous;
+      } catch (err2) {
+        const e2 = err2 as BusinessError;
+        hilog.error(DOMAIN, TAG, 'restore hotkey failed: %{public}d %{public}s', e2.code, e2.message);
+      }
+      reportHotkeyResult(false, e.code);
     }
   }
 

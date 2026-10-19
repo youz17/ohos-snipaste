@@ -28,6 +28,29 @@ struct TrayPanel {
   }
 
   /**
+   * 重新打开欢迎/使用说明窗口。
+   *
+   * 面板是 UIExtension，`UIExtensionContext.startAbility` 可用，所以直接拉起 EntryAbility，
+   * 带上 `about=1` 让它跳过"首次启动"判断。窗口关掉后 EntryAbility 自己退出。
+   */
+  private async showWelcome(): Promise<void> {
+    const ctx = this.ctx();
+    try {
+      await ctx.startAbility({
+        bundleName: ctx.extensionAbilityInfo.bundleName,
+        moduleName: 'entry',
+        abilityName: 'EntryAbility',
+        parameters: { about: '1' }
+      });
+      hilog.info(DOMAIN, TAG, '%{public}s', 'welcome window requested');
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'startAbility failed: %{public}d %{public}s', e.code, e.message);
+    }
+    await this.dismiss();
+  }
+
+  /**
    * 通知常驻的 TrayAbility"开始截图"。
    *
    * 走跨进程信号而不是 `startAbility`：后者会把 TrayAbility 的场景容器重新激活成前台，
@@ -80,6 +103,17 @@ struct TrayPanel {
         .borderRadius(8)
         .onClick(() => {
           this.capture();
+        })
+      Button('使用说明')
+        .type(ButtonType.Normal)
+        .width('100%')
+        .height(40)
+        .fontSize(14)
+        .fontColor('#1F2328')
+        .backgroundColor('#E8EAED')
+        .borderRadius(8)
+        .onClick(() => {
+          this.showWelcome();
         })
       Button('退出')
         .type(ButtonType.Normal)

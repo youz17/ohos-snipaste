@@ -7,8 +7,8 @@ import { statusBarManager } from '@kit.DeskTopExtensionKit';
 const DOMAIN = 0x0000;
 const TAG = 'TrayEntry';
 
-/** 左键面板的内容高度（vp）。宽度由系统决定（本机实测 361vp）。 */
-const PANEL_HEIGHT_VP = 176;
+/** 左键面板的内容高度（vp）：图标 + 开始截图 / 使用说明 / 退出 三个按钮。宽度由系统决定（本机实测 361vp）。 */
+const PANEL_HEIGHT_VP = 232;
 
 /** 资源图 → PixelMap。状态栏只收 PixelMap，不收资源引用。 */
 async function pixelMapOf(ctx: common.Context, resId: number): Promise<image.PixelMap> {

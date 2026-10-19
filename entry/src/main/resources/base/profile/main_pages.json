@@ -1,5 +1,6 @@
 {
   "src": [
+    "pages/Welcome",
     "pages/SelectionPage",
     "pages/PastePage",
     "pages/TrayPanel"
