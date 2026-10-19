@@ -2,6 +2,7 @@ import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { inputConsumer } from '@kit.InputKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CaptureFlow } from '../common/CaptureFlow';
 import { listenCapture } from './CaptureSignal';
@@ -30,6 +31,19 @@ export const READY_MARKER = 'tray-ready';
 const PANEL_SETTLE_MS = 500;
 
 /**
+ * 截图快捷键：Ctrl+Shift+A（2072 = KEYCODE_CTRL_LEFT，2047 = KEYCODE_SHIFT_LEFT，2017 = KEYCODE_A）。
+ *
+ * `inputConsumer.on('hotkeyChange')` 是**全局**快捷键：官方参考页标题即「全局快捷键」，接口描述是
+ * "订阅应用快捷键，获取满足条件的组合按键输入事件"，无权限要求、无前台限定（SDK 注释里的 "change"
+ * 是措辞误导）。真机实测：注册在常驻进程、应用没有任何窗口、焦点在别的会话时按下仍回调。
+ *
+ * 修饰键必填（`preKeys` 至少一个），所以做不出 Snipaste 那种裸 F1。
+ * 订阅是**排他**的：系统已占用报 4200002，别的应用已占用报 4200003 —— 同一组合全局只归一家，
+ * 因此换键位时先看日志里是否报这两个码。
+ */
+const HOTKEY: inputConsumer.HotkeyOptions = { preKeys: [2072, 2047], finalKey: 2017, isRepeat: false };
+
+/**
  * 常驻 Ability：托盘的载体。
  *
  * 由 EntryAbility 以 `processMode: NEW_PROCESS_ATTACH_TO_STATUS_BAR_ITEM` +
@@ -39,20 +53,35 @@ const PANEL_SETTLE_MS = 500;
  * 2. 它**不加载任何页面**，因此压根没有窗口 —— 实测 WindowManagerService 里查不到它的窗口记录，
  *    任务栏自然也不占位。
  *
- * 截图链路挂在这里（而不是 EntryAbility）：主窗口已经不需要存在，
+ * 两条触发链路都挂在这里（而不是 EntryAbility）：主窗口已经不需要存在，
  * 面板点「开始截图」发一个跨进程信号（`CaptureSignal`）唤醒本 Ability 走 CaptureFlow ——
- * 用信号而不是 `startAbility`，否则应用会立刻被重新拉进任务栏（见 `CaptureSignal` 的说明）。
+ * 用信号而不是 `startAbility`，否则应用会立刻被重新拉进任务栏（见 `CaptureSignal` 的说明）；
+ * 全局快捷键则在 `onCreate` 里一次注册，按键回调直接走同一条 CaptureFlow。
  */
 export default class TrayAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'onCreate (resident, no window to show)');
+    this.registerHotkey();
     listenCapture(() => {
-      this.capture();
+      this.capture(PANEL_SETTLE_MS);
     });
   }
 
+  private registerHotkey(): void {
+    try {
+      inputConsumer.on('hotkeyChange', HOTKEY, (opts: inputConsumer.HotkeyOptions) => {
+        hilog.info(DOMAIN, TAG, 'hotkey fired %{public}s', JSON.stringify(opts));
+        this.capture(0);
+      });
+      hilog.info(DOMAIN, TAG, '%{public}s', 'hotkey registered: Ctrl+Shift+A');
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.error(DOMAIN, TAG, 'hotkey register failed: %{public}d %{public}s', e.code, e.message);
+    }
+  }
+
   onWindowStageCreate(windowStage: window.WindowStage): void {
-    // 刻意不 loadContent：这条常驻 Ability 不需要任何窗口内容（截图由面板的跨进程信号触发），
+    // 刻意不 loadContent：这条常驻 Ability 不需要任何窗口内容（截图由面板信号或全局快捷键触发），
     // 而它的窗口一起步就是 STARTUP_HIDE，之后**再也不会被拉起**，所以不存在"启动窗口挂着不消失"
     // 的问题（那要求窗口会被显示）。实测该 Ability 在 WindowManagerService 里连窗口记录都没有。
     this.markReady();
@@ -71,13 +100,14 @@ export default class TrayAbility extends UIAbility {
     }
   }
 
-  private capture(): void {
-    hilog.info(DOMAIN, TAG, '%{public}s', 'capture signal received -> settle then CaptureFlow');
+  /** @param delayMs 面板触发要等它收起（`PANEL_SETTLE_MS`）；快捷键触发没有面板，直接 0。 */
+  private capture(delayMs: number): void {
+    hilog.info(DOMAIN, TAG, 'capture triggered -> CaptureFlow in %{public}dms', delayMs);
     setTimeout(() => {
       CaptureFlow.run(this.context).catch((err: BusinessError) => {
         hilog.error(DOMAIN, TAG, 'CaptureFlow failed: %{public}d %{public}s', err.code, err.message);
       });
-    }, PANEL_SETTLE_MS);
+    }, delayMs);
   }
 
   onDestroy(): void {

@@ -27,11 +27,12 @@
 | 贴图窗口 | ✅ | `pin window 1000x600 for image 1000x600`；无边框、右键菜单可用；拖动改由 `win.startMoving` 接管（2026-10-19 实测：慢拖 +400,+300 → 窗口 `560,460`、快拖 +600,+400 → `1160,860`、微拖 +30,+30 → `1190,890`，全部 1:1 且无过冲；松手后只移动光标窗口不动；右键弹出菜单时窗口不动）；方向键微调 1px（2026-10-19 实测 `[160,160]` → 右 `161` / 下 `161`、连按 5 次右 → `167`、拖到 `267` 后再按 → `268`、连按 12 次左被夹在 `x=0`，且框选生成的贴图窗口**获得焦点后无需先点击**即可微调） |
 | 复制 / 保存 | ✅ | `ImageShare: copied to clipboard`；保存弹系统对话框、默认名 `snipaste_20261016_124328.png` |
 | 比较 | ✅ | 同区域 `差异 0 px / 400000 px (0.00%)`；时钟区域 `差异 179 px / 27000 px (0.66%) · 区域 15×21 @(282,18)` |
-| 首次启动不截图 | ✅ | 引导只注册托盘与拉起常驻进程，不截图；截图统一由托盘面板的「开始截图」（公共事件）触发 |
+| 首次启动不截图 | ✅ | 引导只注册托盘与拉起常驻进程，不截图；截图由两条路径触发：托盘面板的「开始截图」（公共事件）或全局快捷键 Ctrl+Shift+A |
 | 状态栏托盘入口 | ✅ | `TrayEntry: tray icon registered`；折叠区出现线稿图标，点它 → `StartUIExtension: pages/TrayPanel`；面板内「开始截图」→ `CaptureSignal: capture signal published` → `TrayAbility: capture signal received` → 504ms 后 `CUSTOM_SCREEN_CAPTURE already granted` → `capture ok` → `SelectionPage ... shot_*.png`；「退出」→ `tray icon removed` → `KillApplicationSelf` → `pidof` 为空、窗口全清 |
 | 应用无窗口常驻 | ✅ | 引导后 `ProcessMgr: Terminate last` 只终结主进程，挂载进程 `...:entry:TrayAbility:0` 仍在；`hidumper -s WindowManagerService` 查不到任何 `ohsnipaste` 窗口；任务栏裁剪区里我们的图标消失（只剩 WPS） |
 | 截图全程不进任务栏 | ✅ | 面板触发截图 → 选区窗口出现 → Esc 关掉，三个时刻截同一块任务栏裁剪区都只有 WPS；日志里 `refreshSCBSceneContainerSession : add` 只出现 `SelectionAbility`，没有 `TrayAbility`（见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 3.1 / 墓地 10） |
 | 托盘面板截图不带面板 | ✅ | 冻结画面里面板区（x 2250-3050 / y 1600-2000）只剩被压暗的桌面，没有面板与蓝按钮；触发到截图间隔 504ms，`PANEL_SETTLE_MS` 真的生效（此前被 `pages/Index.onPageShow` 的立即触发抢跑） |
+| 全局快捷键截图 | ✅ | 常驻进程注册 `Ctrl+Shift+A`（`hotkey registered`），注入后 `hotkey fired` → `capture ok: 3120x2080` → `SelectionPage windowId=149`；应用当时**没有任何窗口**，焦点在系统「备忘录」（`notepad0 [496,295,2090,1394]`），且该窗口没收到 `DispatchKeyEvent`（按键被系统消费，不是前台普通按键） |
 
 ## 模块健康度
 
@@ -44,7 +45,7 @@
 | 比较 | `common/ImageDiff.ets` + `common/PinRegistry.ets` | ⚠️ 算法按需求实现，基点在框选位置变化后失准（限制，见 SPEC-AND-TRUTH 候选 3） |
 | 分享 | `common/ImageShare.ets` | ✅ 剪贴板 + 系统保存对话框 |
 | 传值 / 落盘 | `common/PinPayload.ets`、`common/PinStore.ets` | ✅ 窗口 id + AppStorage；fd 解码，固定 RGBA_8888 |
-| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayAbility.ets` + `tray/CaptureSignal.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、挂载常驻（独立进程、无窗口、无页面）、左键面板（开始截图 / 退出）均真机跑通；触发走同应用自定义公共事件；⚠️ 面板冷启动约 2.4s；⚠️ 挂载首次调用报 `16000067`，靠有界重试兜住 |
+| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayAbility.ets` + `tray/CaptureSignal.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、挂载常驻（独立进程、无窗口、无页面）、左键面板（开始截图 / 退出）均真机跑通；触发有两条：同应用自定义公共事件（面板）与 `inputConsumer.on('hotkeyChange')`（Ctrl+Shift+A，见 SPEC-AND-TRUTH 3.2）；⚠️ 面板冷启动约 2.4s；⚠️ 挂载首次调用报 `16000067`，靠有界重试兜住 |
 | 引导 | `entryability/EntryAbility.ets` | ✅ 注册托盘 → 挂载常驻进程 → 等握手文件 → `terminateSelf`；⚠️ 握手文件用 `fs.accessSync`（返回 boolean，不是抛异常） |
 
 ## 开放待办（做完即删）
@@ -59,6 +60,7 @@
 5. `ImageDiff` 单元测试（纯计算，可脱离设备）。
 6. **待确认：暗色模式启动窗口** —— `entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`（`base` 已改 `#01000000`）。暗色模式下引导瞬间可能仍冒出纯黑窗口；未实测。
 7. **待确认：常驻进程被杀后的自愈** —— 面板触发改成公共事件后，若 `...:entry:TrayAbility:0` 已死而图标还在（例如只有 `:statusBarView` 活着），点「开始截图」会没有任何反应（老写法靠 `startAbility` 顺带重启进程）。未实测这种状态的复现概率与表现。
+8. **待确认：面板开着时按快捷键** —— 快捷键那条路 `capture(0)` 不等待，而面板是 sceneboard 的窗口、不进"自身窗口"排除（见 SPEC-AND-TRUTH 3.2 / ARCHITECTURE 雷区）。此时冻结画面里可能带面板；未实测。
 
 ## 已知限制（结论与证据在 SPEC-AND-TRUTH，本文不复制）
 
@@ -66,7 +68,7 @@
 - 贴图窗口四角有系统给的约 40px 圆角（2.3 / 2.4）
 - 托盘图标只在应用**还有进程活着**时存在；「退出」或进程被杀后图标消失（SPEC-AND-TRUTH 3.3）
 - 托盘图标左键**必然弹面板**，取消不掉；"点一下直接截图"平台不支持（3.3）
-- 第三方做不了全局快捷键（3.2）
+- 全局快捷键固定为 Ctrl+Shift+A：修饰键必填（做不出裸 F1）、组合全局排他、目前没有改键入口（3.2）
 - 图片比较的基点不稳健（候选 3）
 
 ## 技术债与触发重构的阈值

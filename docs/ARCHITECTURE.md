@@ -26,10 +26,15 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 
 ## 触发链路
 
-只有一个入口：托盘面板的「开始截图」→ **跨进程信号**（`commonEventManager` 自定义事件，
-`tray/CaptureSignal.ets`）→ 常驻进程 `TrayAbility` 的订阅回调 → `CaptureFlow.run()`。
+两个入口，终点同一条 `CaptureFlow.run()`，都在常驻进程 `TrayAbility` 里接：
 
-信号而不是 `startAbility`：**任何** ability 启动都会把常驻 Ability 的场景容器重新激活成前台，
+1. **全局快捷键 Ctrl+Shift+A**：`onCreate` 里 `inputConsumer.on('hotkeyChange', …)` 注册一次
+   （`registerHotkey`），按键回调直接 `CaptureFlow.run()`，不加延迟。
+2. **托盘面板「开始截图」**：**跨进程信号**（`commonEventManager` 自定义事件，`tray/CaptureSignal.ets`）
+   → 常驻进程的订阅回调 → 等 `PANEL_SETTLE_MS = 500` 再 `CaptureFlow.run()`（面板是 sceneboard 的窗口，
+   要等它收走才不会进冻结画面）。
+
+两条都**不启动任何 ability**：**任何** ability 启动都会把常驻 Ability 的场景容器重新激活成前台，
 应用立刻在任务栏冒出一个带运行点的图标，而且窗口再隐藏它也不消失（`STARTUP_HIDE` 与
 `ProcessMode.ATTACH_TO_STATUS_BAR_ITEM` 都拦不住，实测）。因此引导之后**再也不启动 any ability**。
 
@@ -51,11 +56,11 @@ CaptureFlow.run(ctx)
 （权限申请与窗口状态的交互记录见 SPEC-AND-TRUTH 1.4）。
 
 面板按「开始截图」到真正截图之间有 `PANEL_SETTLE_MS = 500`（`tray/TrayAbility.ets`）：面板是
-sceneboard 的窗口，要等它收走才不会进冻结画面。
+sceneboard 的窗口，要等它收走才不会进冻结画面；快捷键触发没有面板要等，传 0。
 
 ## 状态栏托盘入口
 
-常驻入口不靠全局快捷键（平台不给），而是状态栏折叠区里的自绘图标。图标由**挂在状态栏项上的常驻进程**持有，
+常驻入口是状态栏折叠区里的自绘图标（全局快捷键另有一条路径，见上节）。图标由**挂在状态栏项上的常驻进程**持有，
 所以应用可以没有任何窗口 —— 任务栏也就不占位（这一点改写了 SPEC-AND-TRUTH 3.1 的旧结论）。
 
 ```
@@ -194,3 +199,5 @@ PasteAbility（每张图一个）
 | 挂载进程还没起来就 `terminateSelf` | AMS 判定"最后一个 ability 退出"→ `ProcessMgr: Terminate last` 把**整个应用**杀掉（含已挂载进程，托盘图标一起没）。必须先等到握手文件 `files/tray-ready` |
 | `fs.accessSync(path)` 返回 boolean | 它**不抛异常**。写成 try/catch 判断存在性会恒真、握手直接失效（本项目踩过一次） |
 | 托盘图标尺寸 | 实现里 `STANDARD_SIZE = 24`（vp），即应为 `vp2px(24)`；尺寸不符只记一条 `The size of the pixelmap exceeds the limit`，不拦注册 |
+| 全局快捷键注册在 `EntryAbility` 里 | 引导完就 `terminateSelf`，订阅随进程消失 —— 按键不回调会被误判成"平台不支持"。必须注册在常驻进程（`TrayAbility.onCreate` 的 `registerHotkey`） |
+| 全局快捷键的 `preKeys` 留空 | `HotkeyOptions.preKeys` 至少 1 个修饰键（SDK 注释写最多 2 个，官方文档写范围 [1,4]），所以裸 `F1` 注册不了；同一组合**排他**，被占时报 `4200002`（系统）/ `4200003`（别的应用） |

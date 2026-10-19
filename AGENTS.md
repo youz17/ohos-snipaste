@@ -24,9 +24,11 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
 
 - 构建需要在**不受限沙箱**下跑：hvigor 会在缓存目录建目录联接（junction），沙箱会拒绝重解析点。
 - 安装：`hdc install -r entry\build\default\outputs\default\entry-default-signed.hap`
-- 触发一次截图：点状态栏折叠区里的托盘图标 → 面板「开始截图」。**没有命令行等价物**：面板发的是应用内
-  公共事件（`ets/tray/CaptureSignal.ets`），而 `aa start -a TrayAbility` 既不会截图，还会把应用重新拉进任务栏
-  （见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.1）。坐标与判定手法见 [docs/VERIFY.md](docs/VERIFY.md)。
+- 触发一次截图：**快捷键 Ctrl+Shift+A**，命令行注入即可（无需点界面）：
+  `hdc shell "uinput -K -d 2072 -d 2047 -d 2017 -i 60 -u 2017 -u 2047 -u 2072"`。
+  手动路径是点状态栏折叠区里的托盘图标 → 面板「开始截图」（面板发的是应用内公共事件
+  `ets/tray/CaptureSignal.ets`，而 `aa start -a TrayAbility` 既不会截图，还会把应用重新拉进任务栏，
+  见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.1）。坐标与判定手法见 [docs/VERIFY.md](docs/VERIFY.md)。
 - 清场：`hdc shell aa force-stop com.youz.ohsnipaste`
 
 真机驱动、截图取证的完整手法见 [docs/VERIFY.md](docs/VERIFY.md)。
@@ -59,8 +61,9 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 不给这个会 EPERM
   `STARTUP_HIDE` 挂载的 `TrayAbility`）。应用因此可以没有窗口、也不占任务栏；但图标只在应用**还有进程
   活着**时存在。平台约束见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.1 / 3.3，实现见
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-- 第三方做不了全局快捷键：`inputConsumer.on('hotkeyChange')` 注册成功但按键不回调（它是"配置变更"
-  通知），`on('keyPressed')` 文档限定前台；系统快捷键表只读、`shortcuts.json` 无键位字段。
+- 全局快捷键**可以用**（`inputConsumer.on('hotkeyChange')`，无需权限），已接成 Ctrl+Shift+A；但必须注册在
+  **不会退出的进程**里（常驻 `TrayAbility`），且组合**排他**、**必须带修饰键**（裸 `F1` 注册不了）。
+  见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 3.2。
 
 ## 文档纪律（防腐败六条）
 

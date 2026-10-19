@@ -84,8 +84,9 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
 2. **读 schema**：`toolchains\modulecheck\*.json` 决定 manifest/资源文件能写什么字段
    （例：`shortcuts.json` 只有 `shortcutId/label/icon/visible/wants`，所以快捷方式带不了键位）。
 3. **真机实测**：注册 + 注入事件 + 看日志里"谁收到了"。
-   例：判断全局快捷键 → 注册成功（`SubscribeHotkey`）≠ 能用；注入 `Ctrl+Shift+A` 后
-   前台是 `WMSEvent: DispatchKeyEvent`（被当普通按键），后台则毫无日志 → 不可用。
+   例：判断全局快捷键 → "注册成功"不等于能用、"注册失败"也不等于不能用：订阅跟着**注册它的进程**活，
+   进程一退出就没了（本项目曾把注册写在会 `terminateSelf` 的 `EntryAbility` 里，于是得出"平台不支持"的反向结论）。
+   做法是注册在常驻进程 → 注入组合键 → 看回调日志 + 焦点窗口有没有收到 `DispatchKeyEvent`。
 
 第 3 步必须有，第 1、2 步只能给"大概行不行"。
 
@@ -126,6 +127,30 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
     （有它就意味着走了 `startAbility`，应用会常驻任务栏，见墓地 10）。
 11. 换设备安装前先看签名：`hdc shell bm get -u` 得到的 UDID 必须在该 `.p7b` 的 `device-ids` 里，
     否则 `hdc install` 报 `9568423`。
+
+## 验证全局快捷键（Ctrl+Shift+A）
+
+```powershell
+& $hdc shell aa force-stop com.youz.ohsnipaste
+& $hdc shell aa start -a EntryAbility -b com.youz.ohsnipaste    # 只做引导
+Start-Sleep -Seconds 8
+& $hdc shell "hilog -r" | Out-Null
+# Ctrl+Shift+A：2072 = CTRL_LEFT，2047 = SHIFT_LEFT，2017 = A；按下/抬起写在同一句里
+& $hdc shell "uinput -K -d 2072 -d 2047 -d 2017 -i 60 -u 2017 -u 2047 -u 2072"
+Start-Sleep -Seconds 4
+& $hdc shell "hilog -x" | Select-String 'TrayAbility: (hotkey|capture)|capture ok|SelectionPage: windowId'
+& $hdc shell "hidumper -s WindowManagerService -a '-a'" | Select-String 'ohsnipaste'
+```
+
+判据三条：
+
+1. 启动时有 `TrayAbility: hotkey registered: Ctrl+Shift+A`，按键时有 `TrayAbility: hotkey fired {...}`；
+   若报 `4200002` / `4200003`，说明组合被系统或别的应用占了（排他），换键位再试。
+2. `capture ok: 3120x2080` + `SelectionPage: windowId=...`，dump 里选区窗口是 `[0,0,3120,2080]`。
+3. **按键没漏给前台窗口**：同一时刻 `hilog -x` 里不该有发给焦点窗口的 `WMSEvent: DispatchKeyEvent`。
+   想更严格就先 `aa start -b com.huawei.hmos.notepad -a MainAbility`，让别的应用在前台再按。
+
+> 这条顺带给了一个**命令行触发截图**的办法（以前只有点面板一条路）：注入组合键即可。
 
 ## 典型验证序列
 
