@@ -37,14 +37,6 @@ struct PastePage {
 
   private preview: image.PixelMap | undefined = undefined;
   private win: window.Window | undefined = undefined;
-  private startWindowX: number = 0;
-  private startWindowY: number = 0;
-  private moving: boolean = false;
-  private pendingX: number = 0;
-  private pendingY: number = 0;
-  private sentX: number = 0;
-  private sentY: number = 0;
-  private moveInFlight: boolean = false;
 
   private context(): common.UIAbilityContext {
     return this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -79,58 +71,26 @@ struct PastePage {
   }
 
   /**
-   * 拖动窗口。
+   * 拖动窗口：交给系统窗口管理器（`window.startMoving`），窗口自己跟手。
    *
-   * 坑：这里**不能**用 touch.screenX/screenY。实测它们并不表示屏幕绝对坐标，
-   * 取值与 windowX/windowY 相同（相对窗口左上角），窗口一动坐标就跟着漂，
-   * 于是拖动形成反馈回路：拖 200px 窗口只走了约 100px。
+   * 早前这里是自己算的：`target = 上次目标 + (touch.windowX - 按下时 windowX)`，再串行发
+   * `moveWindowTo`。那是个**积分器**，而 `moveWindowTo` 是异步生效的：每次事件都把"上一步
+   * 还没追上的差值"再累加一遍，窗口于是越过光标、下一条事件又反向修正 —— 正反馈震荡，
+   * 观感就是抖。实测真机同一手法拖 200px，窗口走了 365px（×1.83，见 docs/archive/HISTORY.md）。
+   * `startMoving` 由窗口管理器直接接管光标跟随，没有这个环：实测拖 400px 窗口正好走 400px。
    *
-   * 改用 windowX/windowY（窗口内位移）做闭环：
-   *   target = 窗口当前发送位置 + (当前窗口内坐标 - 按下时窗口内坐标)
-   * 窗口追上光标后括号内差值不再变化，target 收敛并稳定，不会跑飞。
-   * 移动请求还要串行 + 合并，同时发多个 moveWindowTo 会互相竞争。
+   * 约束（SDK）：只有在本回调里、事件类型为 TouchType.Down 时调用，窗口才会跟随光标；
+   * 偏移量单位 px，取按下点相对窗口左上角的位置，超出窗口范围会被判非法。
    */
-  private beginMove(windowX: number, windowY: number, rectLeft: number, rectTop: number): void {
+  private startMovingWindow(touch: TouchObject): void {
     if (this.win === undefined) {
       return;
     }
-    this.sentX = rectLeft;
-    this.sentY = rectTop;
-    this.pendingX = rectLeft;
-    this.pendingY = rectTop;
-    this.startWindowX = windowX;
-    this.startWindowY = windowY;
-    this.moving = true;
-  }
-
-  private moveBy(deltaX: number, deltaY: number): void {
-    if (this.win === undefined || !this.moving) {
-      return;
-    }
-    this.pendingX = Math.round(this.sentX + this.getUIContext().vp2px(deltaX));
-    this.pendingY = Math.round(this.sentY + this.getUIContext().vp2px(deltaY));
-    this.flushMove();
-  }
-
-  /** 串行发送移动请求：上一请求未完成时只更新目标，不叠加新请求。 */
-  private flushMove(): void {
-    if (this.win === undefined || this.moveInFlight) {
-      return;
-    }
-    this.moveInFlight = true;
-    this.win.moveWindowTo(this.pendingX, this.pendingY).then(() => {
-      this.moveInFlight = false;
-      if (this.pendingX !== this.sentX || this.pendingY !== this.sentY) {
-        this.sentX = this.pendingX;
-        this.sentY = this.pendingY;
-        this.flushMove();
-      }
-    }).catch((err: BusinessError) => {
-      this.moveInFlight = false;
-      hilog.warn(DOMAIN, TAG, 'moveWindowTo failed: %{public}d %{public}s', err.code, err.message);
+    const offsetX: number = Math.round(this.getUIContext().vp2px(touch.x));
+    const offsetY: number = Math.round(this.getUIContext().vp2px(touch.y));
+    this.win.startMoving(offsetX, offsetY).catch((err: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, 'startMoving failed: %{public}d %{public}s', err.code, err.message);
     });
-    this.sentX = this.pendingX;
-    this.sentY = this.pendingY;
   }
 
   private async copyToClipboard(): Promise<void> {
@@ -243,19 +203,11 @@ struct PastePage {
     })
     .onTouch((event: TouchEvent) => {
       const touch: TouchObject = event.touches[0];
-      hilog.info(DOMAIN, TAG, 'touch type=%{public}d count=%{public}d', event.type, event.touches.length);
       if (touch === undefined) {
         return;
       }
       if (event.type === TouchType.Down) {
-        if (this.win !== undefined) {
-          const rect = this.win.getWindowProperties().windowRect;
-          this.beginMove(touch.windowX, touch.windowY, rect.left, rect.top);
-        }
-      } else if (event.type === TouchType.Move) {
-        this.moveBy(touch.windowX - this.startWindowX, touch.windowY - this.startWindowY);
-      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-        this.moving = false;
+        this.startMovingWindow(touch);
       }
     })
     .bindContextMenu(this.pinMenu(), ResponseType.RightClick)

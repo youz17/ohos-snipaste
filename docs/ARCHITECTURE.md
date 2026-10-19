@@ -171,8 +171,8 @@ PasteAbility（每张图一个）
 | `loadContent(url, storage)` 的 LocalStorage 在页面里取不到值 | 用 AppStorage + **本窗口 id** 作 key（`common/PinPayload.ets`） |
 | `@Builder` 按值传参不具备刷新能力 | 会随选区变化的覆盖层直接写进 `build()`（遮罩四块） |
 | `PanGesture` 约 5vp 激活阈值 | 选区用 `onTouch`，并给覆盖层加 `HitTestMode.None` |
-| `touch.screenX/screenY` 不是屏幕绝对坐标（实测等于 `windowX/windowY`） | 拖窗用窗口内位移做闭环：`target = 已发送位置 + (当前窗口内坐标 - 按下时窗口内坐标)` |
-| 同时发多个 `moveWindowTo` 会互相竞争 | 移动请求串行 + 合并（`pendingX/sentX/moveInFlight`） |
+| 拖动无装饰贴图窗口别自己算 | 在 `onTouch` 的 `TouchType.Down` 里调 `win.startMoving(vp2px(touch.x), vp2px(touch.y))`，由窗口管理器接管光标跟随（`pages/PastePage.ets`）。自己用 `moveWindowTo` 做增量闭环会因异步延迟正反馈震荡 → 抖，见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 2.8 |
+| `TouchObject` 的 `screenX/screenY` 已废弃（since 10，等于 `windowX/windowY`，窗口相对） | 窗口内位置用 `x/y` 或 `windowX/windowY`，屏幕绝对位置用 `displayX/displayY` —— **都是 vp** |
 | 图片用沙箱路径交给 `Image()` 可能不显示 | `fileIo` 打开 fd → `image.createImageSource(fd)`，解码要 `RGBA_8888` |
 | `bundleName` 不要硬编码 | 用 `context.abilityInfo.bundleName` |
 | 贴图窗口 ZOrd 比选区高，会挡住操作条 | 选区窗口在 `maximize()` **之后**再 `setWindowTopmost(true)` |

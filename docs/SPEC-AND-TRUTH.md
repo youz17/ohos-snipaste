@@ -65,12 +65,13 @@
 
 - 结论：截图区域比它小时窗口会被撑大，按 1:1 画就露出一圈灰底。现用"同一张图放大模糊铺底"（`ImageFit.Cover` + `blur(40)`）填补，正常尺寸时该层不可见。
 - 证据：**实测** 窗口 dump `ohsnipaste0 [ ... 608 136 ]`；代码里 `resize(320, 72)` vp，按 1vp = 1.9px 换算正是 608x136px。
-- 代码：`pages/PastePage.ets:196` `isClamped()`。
+- 代码：`pages/PastePage.ets:156` `isClamped()`。
 
 ### 2.6 单位陷阱：`resize` 收 vp，`moveWindowTo` 收 px
 
 - 结论：单位不一致，两处都按 vp 传会让窗口落在屏幕中间（提交 `1862a6c` 修的就是这个）。
-- 证据：**实测**。代码：`entryability/EntryAbility.ets:69`、`pages/PastePage.ets:110`。
+- 证据：**实测**。代码：`entryability/EntryAbility.ets:69`、`pasteability/PasteAbility.ets:91`（贴图初始落点）。
+- 对照：`TouchObject` 的 `x/y`、`windowX/windowY`、`displayX/displayY` **都是 vp**（真机实测：1vp = 1.9px 时按下点 `x=126.32` 对应窗口内 240px），只有 `startMoving` 的偏移量收 px。
 
 ### 2.7 启动窗口（start window）的行为
 
@@ -79,6 +80,13 @@
 - 结论：底色由资源 `start_window_background` 决定，`base` 已改为 `#01000000`（近全透明；`#00000000` 会被当成未设置）。
 - 变更生效的三项配置有 WMS 日志佐证（`OnSetWindowDecorVisible` / `OnSetWindowBackgroundColorSync color=#01000000` / `OnSetWindowShadowEnabled`）。
 - ⚠️ **未验证**：`entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`，暗色模式下激活瞬间可能仍冒出纯黑窗口 —— 登记在 [STATUS.md](STATUS.md) 待确认。
+
+### 2.8 拖动无装饰窗口：用 `window.startMoving`，别自己发 `moveWindowTo`
+
+- 结论：`startMoving(offsetX, offsetY)`（Since 15，`SystemCapability.Window.SessionManager`）能让窗口管理器直接接管光标跟随，**只在 `onTouch` 的 `TouchType.Down` 回调里调用才生效**，偏移量是按下点相对窗口左上角的 **px** 值。无装饰主窗口可用，不需要 `TYPE_FLOAT` 或受限权限。
+- 反例：用 `moveWindowTo` 自己算增量（`target = 上次目标 + Δ窗口内坐标`）会抖 —— 那是把"异步生效的移动"当同步用，落后量在下一条事件里再累加一遍，正反馈震荡。判别证据：同一手法真机拖 200px 窗口走了 365px（×1.83，见 [archive/HISTORY.md](archive/HISTORY.md)）；换 `startMoving` 后拖 400px 窗口正好走 400px，`windowRectChange` 57 个采样点单调、零回退。
+- 副作用（**实测**）：跟手拖到屏幕边缘会触发系统窗口吸附 —— 贴图窗口被改成半屏尺寸（`[1571 0 1549 1955]`），页面走"被撑大"分支画模糊铺底；再拖一次即恢复原尺寸（`1000x600`）。公开 API 没有关掉吸附的开关（`setResizeByDragEnabled` 只管边框缩放）。
+- 证据：**实测**（2026-10-19；`WMSLayoutPc: StartMovingWithCoordinate: offset:[340,240] pointer:[500,400]`）+ **SDK**（`@ohos.window.d.ts` 两个重载的注释）。
 
 ## 3. 常驻入口（任务栏 / 托盘 / 快捷键）
 
@@ -161,6 +169,9 @@
     TrayAbility 的会话重新激活成前台：`PCDock-PcSmartDockModel: refreshSCBSceneContainerSession : add: <persistentId>, com.youz.ohsnipaste, , entry, TrayAbility`
     → `SCBSceneContainer: aboutToAppear`，任务栏立刻多出带运行点的图标，且窗口 `minimize()` 后仍在，只有 force-stop 才清。
     正解是运行期改用同应用自定义公共事件（见 3.1 / 3.3）。
+11. **「自己发 `moveWindowTo` 做增量闭环就是贴图窗口的正确拖动方式」** —— 曾是 `PastePage` 的实现（串行 + 合并，看着挺"工程"）。
+    判别反例：真机拖 200px 窗口走了 365px（×1.83），且用户反复反馈"拖动过程中严重抖动"——增量闭环把异步生效的移动当同步用，落后量每条事件再累加一遍，正反馈震荡。
+    正解是 `win.startMoving(offsetX, offsetY)`：WMS 直接接管光标跟随，同一手法 400px 拖拽窗口正好走 400px、轨迹 57 个采样点单调零回退（见本文 2.8）。
 
 ## 6. 候选方案与待决策
 
@@ -174,5 +185,6 @@
 | 6 | `ImageDiff` 单元测试 | 纯计算逻辑可脱离设备验证对齐与统计 | 小 | 你 |
 | 7 | 贴图窗口去掉按钮、能力收进右键菜单后，是否再留一个最小的可见操作入口 | 贴图窗口上现在没有任何可见按钮，新用户可能找不到菜单 | 小（会重新挡住一点图片） | 你 |
 | 8 | 托盘入口从"左键面板"改成"右键菜单 + `menuAction` 直接启动 ability" | 省掉面板这一层 | 小；但要从右键触发，且 `menuAction` 是**启动 ability**，会重新把应用拉进任务栏（见 3.1），除非改成同时投递公共事件 | 你 |
+| 9 | 贴图窗口禁止被窗口管理器吸附/改尺寸（`setWindowLimits` 把 min=max=图片尺寸） | 拖到屏幕边缘时贴图不会被吸成半屏（见 2.8 副作用） | 小；需实测能否拦下吸附、并处理系统最小尺寸 608x136 的钳制（要按 `resize` 后的实际 `windowRect` 设限） | 你 |
 
 （未列入的候选：画中画 —— 已排除，理由见本文 2.2。）

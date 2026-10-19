@@ -214,3 +214,22 @@ WMSAttribute: OnSetWindowShadowEnabled winId: 718, set enable: 0
 `fullscreen / split / floating`，便于 2in1 上以自由窗口显示。
 
 调试签名**不需要申请和审批**；只有受限权限（ACL）才需要走 AppGallery Connect 申请，本项目不使用。
+
+## 贴图窗口拖动：从"自己算"改成"交给系统"（2026-10-19）
+
+用户第二次反馈"贴图框拖动依旧存在问题，拖动过程中会严重的抖动"。前一轮的修法是"窗口内位移做闭环 +
+串行合并 `moveWindowTo`"，把抖动当成了"多个移动请求互相竞争"，方向错了。
+
+- **测出来的真相**：`TouchObject` 的 `x/y`、`windowX/windowY`、`displayX/displayY` 全是 **vp**（真机按下点
+  `x=126.32` 对应窗口内 240px，密度 1.9），所以单位换算本来就没错；错的是**结构** —— 增量闭环把异步生效的
+  移动当同步用，落后量在每条事件里再累加一遍，正反馈震荡。上一轮记的 ×1.83（拖 200px 窗口走 365px）
+  正是过冲的证据，当时却当成"差不多对"。
+- **改法**：`onTouch` 的 `TouchType.Down` 里直接 `win.startMoving(vp2px(touch.x), vp2px(touch.y))`，
+  由窗口管理器接管光标跟随（SDK Since 15；实测日志 `WMSLayoutPc: StartMovingWithCoordinate`）。
+  删掉了 `beginMove/moveBy/flushMove` 与 `pendingX/sentX/moveInFlight` 那套状态。
+- **验收数据**（本机 `ohsnipaste1` 1000x600，初始 160,160）：慢拖 +400,+300 → `560,460`；快拖 +600,+400 →
+  `1160,860`；微拖 +30,+30 → `1190,890`；撞右边界（窗口右缘到 3691，超出屏宽）后回拖 -300 → 精确 `-300`；
+  松手后只移光标窗口不动；右键弹菜单窗口不动。轨迹 57 个采样点单调零回退，末两点相同 = 收敛。
+- **新发现的副作用**：拖到屏幕边缘会触发系统吸附，窗口被改成半屏 `[1571 0 1549 1955]`（页面按"被撑大"画
+  模糊铺底），再拖一次恢复 `1000x600`。公开 API 没有关闭吸附的开关，已登记为待决策候选（SPEC-AND-TRUTH 候选 9）。
+

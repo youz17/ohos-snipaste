@@ -156,6 +156,33 @@ Start-Sleep -Seconds 4
 **日志是主证据**：`crop x=.. y=..` 证明选区换算正确；`pin window WxH for image WxH` 证明 1:1；
 `ImageDiff: 差异 N px / 比对 M px` 证明比较结果。像素探针用来交叉验证"看到的确实是这样"。
 
+## 验证"贴图窗口拖动跟手"（抖动回归必跑）
+
+**判据三条**，任何一条不符都算失败：
+
+1. **位移 = 光标位移**（1:1，无 ×1.9、无过冲）。逐次记录前后矩形，别只看"能动"。
+2. **松手后窗口纹丝不动** —— 只移动光标（`uinput -M -m`，不带按键）不应产生位移。
+3. **右键不误触拖动** —— 弹出菜单时窗口位置不变。
+
+```powershell
+function Rect { (& $hdc shell "hidumper -s WindowManagerService -a '-a'" | Select-String 'ohsnipaste').Line }
+Write-Output "before: $(Rect)"
+& $hdc shell "uinput -M -g 500 400 900 700 400"    # 慢拖 +400,+300
+Start-Sleep -Milliseconds 600
+Write-Output "after: $(Rect)"                        # 应正好 +400,+300
+```
+
+**轨迹取证（要证明"单调、不回退"时用）**：临时在 `pages/PastePage.ets` 的 `init()` 里挂
+`win.on('windowRectChange', o => hilog.info(..., 'rect %d,%d', o.rect.left, o.rect.top))`，
+拖一次后 `hilog -x | Select-String 'rect'` 取序列，按时间切段后检查 x/y 是否单调、步长是否均匀；**验完把这行删掉**。
+（2026-10-19 基线：拖 400px/400ms 得 57 个采样、x/y 零回退、末两点相同=收敛；系统侧同时打
+`WMSLayoutPc: StartMovingWithCoordinate: offset:[..] pointer:[..]`，offset 应等于"光标 - 窗口左上角"。）
+
+**两条容易误判的现象**：
+
+- 拖到**屏幕边缘**会触发系统窗口吸附，窗口被改成半屏（`[1571 0 1549 1955]`），再拖一次恢复原尺寸。这是平台行为，不是抖动（见 SPEC-AND-TRUTH 2.8）。
+- 中途插一条 `uinput -M -g x y x+1 y` 这种"原地点击"实际是 1px 拖动，窗口会跟着走 1px —— 别当成漂移。
+
 ## 清理
 
 ```powershell
