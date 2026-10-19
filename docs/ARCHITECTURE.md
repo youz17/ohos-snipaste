@@ -219,6 +219,11 @@ PasteAbility（每张图一个）
 `WINDOW_TOPMOST`（贴图置顶）、`SET_WINDOW_TRANSPARENT`（去阴影）。等级、授权方式与证据见
 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 第 4 节。刻意不申请 `SYSTEM_FLOAT_WINDOW`（system_basic，需 ACL）。
 
+截图权限的**申请**只能由**带窗口**的 Ability 发起 —— 入口是欢迎窗口的「去授权」
+（`pages/Welcome.ets` 的 `askPermission`）。常驻的 `TrayAbility` 没有窗口，在它那里调
+`requestPermissionsFromUser` 既不弹窗也不回调，`CaptureFlow.busy` 会永久卡死（实测）。
+因此 `CaptureFlow` 只查状态（`ScreenCapturer.isGranted`），未授权时退化成系统选择器。
+
 ## 实现雷区（实测，改代码前必读）
 
 | 雷区 | 正确做法 |
@@ -240,9 +245,10 @@ PasteAbility（每张图一个）
 | `startAbility(TrayAbility)` 返回 `16000068` | 常驻进程早就在了，这次**不会**再落握手文件 —— 别去等 `tray-ready`，否则白等 6s 并留下一个隐藏窗口（`EntryAbility.trayAlreadyRunning`） |
 | 改键后重新注册全局快捷键 | `inputConsumer.off('hotkeyChange', options)` 必须传**同一个 options 对象**，所以要把当前注册的对象留引用；被占用时 `on` 会抛错，回滚就是把旧对象再 `on` 一次并回报失败 |
 | 托盘面板里 `startAbility` | 面板是 `UIExtensionContext`，它**有** `startAbility`（`ExtensionContext` 基类没有，容易误判）；`bundleName` 用 `ctx.extensionAbilityInfo.bundleName` |
-| `statusBarView` 扩展的 `exported` | 官方示例写 `true`，本项目保持一致；但本机实测 `false` 时 sceneboard 照样能拉起该扩展，"必须 true"不成立（见 SPEC-AND-TRUTH 第 5 节墓地） |
+| `statusBarView` 扩展的 `exported` | 官方示例写 `true`，本项目保持一致；但本机实测 `false` 时 sceneboard 照样能拉起该扩展，"必须 true"不成立（见 SPEC-AND-TRUTH 第 6 节墓地） |
 | `image` 模块解不了 SVG | 图形资源先离屏光栅化成 PNG 再打进包（`media/tray_icon_*.png`、`media/panel_icon.png`、分层图标 `background/foreground.png`） |
 | 托盘面板是 UIExtension，冷启动约 2.4s | 面板要等 sceneboard 拉起 `:statusBarView` 进程才出现，验证时抢拍要等 ≥3s |
+| 在无窗口 Ability（`TrayAbility`）里申请 user_grant 权限 | 只查状态（`ScreenCapturer.isGranted`），申请放到有窗口的欢迎窗口；无窗口时 `requestPermissionsFromUser` **静默挂起**（不弹窗、不回调、不报错） |
 | 左键面板取消不掉 | `StatusBarItem.quickOperation` 是**必填**，且实现里 `height <= 0` 直接抛 `401`；系统最小约 106vp。别指望"点一下不出面板" |
 | 面板还开着时截图，面板会进冻结画面 | 面板是 sceneboard 的窗口，不算"自身窗口"、不会被排除。现行做法是收到信号后先等 `PANEL_SETTLE_MS = 500` 再 `CaptureFlow`；实测该等待真的生效（触发 → `CUSTOM_SCREEN_CAPTURE already granted` 间隔 ≈ 504ms），冻结图里没有面板 |
 | 用 `startAbility` 唤醒挂载的常驻 Ability | 会重新激活它的场景容器 → 应用**立刻在任务栏冒出图标，且窗口隐藏后也不消失**（`STARTUP_HIDE`、`ProcessMode.ATTACH_TO_STATUS_BAR_ITEM` 都拦不住）。运行期改用同应用自定义公共事件（`tray/CaptureSignal.ets`），启动 ability 只留给引导 |

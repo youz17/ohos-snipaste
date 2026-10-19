@@ -19,6 +19,10 @@
 - 结论：`ohos.permission.CUSTOM_SCREEN_CAPTURE` 是 normal + user_grant，声明后运行时弹窗即可拿到，**不需要**华为 ACL 审批。
 - 证据：**SDK** `toolchains/lib/PermissionDefinitions.json` → `grantMode=user_grant, availableLevel=normal, since=14`；**实测** 日志 `ScreenCapturer: CUSTOM_SCREEN_CAPTURE granted=true` → `capture ok: 3120x2080`。
 - 代码：`common/ScreenCapturer.ets:14`；`ensurePermission()` 先 `checkAccessTokenSync` 查已有授权，未授权才 `requestPermissionsFromUser`。
+- **申请必须由带窗口的 Ability 发起**：在常驻的无窗口 `TrayAbility` 里调 `requestPermissionsFromUser`，
+  系统**不弹窗、不回调、也不报错**——promise 永久挂起，调用方的 `busy` 标志卡死（症状：按快捷键毫无反应，
+  日志只有 `capture triggered` 一行）。授权入口放在欢迎窗口的「去授权」。证据：**实测**（卸载重装后复现，
+  窗口态申请一次即弹窗并通过）。
 
 ### 1.2 `screenshot.capture()` 只能用无参形式
 
@@ -123,7 +127,7 @@
   `4200002 / 4200003` 这两条失败分支本轮**没能复现**（回滚逻辑只有代码、没有实测）。
 - 约束：
   - **必须注册在常驻进程**：`EntryAbility` 引导完 `terminateSelf`，注册随进程消失。早前"注册成功但按键不回调"
-    就是在这个形态下测的（见第 5 节墓地 1）。
+    就是在这个形态下测的（见第 6 节墓地 1）。
   - **修饰键必填**：`HotkeyOptions.preKeys` 至少 1 个（SDK 注释写最多 2 个，官方文档写范围 [1,4]），
     所以做不出 Snipaste 那种裸 `F1`；`isRepeat: false` 抑制长按重复触发。
   - **排他**：同一组合全局只归一家，系统已占用报 `4200002`、别的应用已占用报 `4200003`。换键位先看这两个码。
@@ -133,7 +137,7 @@
 ### 3.3 状态栏托盘图标可以做（实测通过）
 
 - 结论：第三方应用能把图标放进状态栏右下角的折叠区（`^`），左键点击可拉起自绘面板。需要三件套：
-  1. `module.json5` 声明一个 `"type": "statusBarView"` 的 extensionAbility（官方示例写 `exported: true`，本机实测 `false` 也能被拉起，见第 5 节墓地 7）；
+  1. `module.json5` 声明一个 `"type": "statusBarView"` 的 extensionAbility（官方示例写 `exported: true`，本机实测 `false` 也能被拉起，见第 6 节墓地 7）；
   2. 一个继承 `StatusBarViewExtensionAbility`（`@kit.DeskTopExtensionKit`）的类，在 `onSessionCreate` 里 `session.loadContent(<页面>)`，该页面要登记进 `main_pages.json`；
   3. 运行期 `statusBarManager.addToStatusBar(context, item)`，`item.icons.white/black` 传 `vp2px(24)` PixelMap，`item.quickOperation` 指向上面那个扩展。
 - **图标尺寸有规范值**：实现里 `STANDARD_SIZE = 24`（vp），即图标应为 `vp2px(24)`（本机 1.9 密度 ≈ 46px）。尺寸不符只由 `checkIcons` 记一条 `The size of the pixelmap exceeds the limit`，**不拦注册**。
@@ -169,7 +173,44 @@
 - 声明位置：`entry/src/main/module.json5`。
 - 刻意不申请 `SYSTEM_FLOAT_WINDOW`（system_basic，需 ACL），代价见 2.1 / 2.2。
 
-## 5. 证伪墓地（曾以为成立、已被推翻）
+## 5. 应用分发（签名 / 邀请测试）
+
+- **调试签名 14 天、且绑设备**：DevEco 自动签名签出的调试 Profile `validity` 只有 14 天
+  （本机 2026-10-16 15:48 → 2026-10-30 15:48），`device-ids` 只登记签名时连过的设备（本机 2 个 UDID，
+  其中一个是当前这台 HAD-W32）；名单外设备 `hdc install` 报 `9568423`。过期后 hvigor 报
+  `The certificate has expired!`，回 DevEco 勾一次「自动签名」即可续期。证据：**实测**（解析 `.p7b`）。
+- **发布 Profile 不绑设备、3 年**：`ohos-snipaste-发布Release.p7b` → `type: release`、
+  `app-distribution-type: app_gallery`、**无** `device-ids`、`validity` 2026-10-19 → 2029-10-19、
+  `bundle-name` 与工程一致。证据：**实测**（解析文件；与本机 `.p12` 的 SKI 一致）。
+- **hvigor 只吃 DevEco 加密后的密码**：`signingConfigs.material` 里填明文密码，`SignHap` 直接报
+  `00303116 The length of the storePassword or keyPassword field … is less than 32`（按密文长度校验）。
+  所以发布签名这份配置只能在 `File > Project Structure > Signing Configs` 里建，由 IDE 加密后写回
+  `build-profile.json5`。证据：**实测**。
+- **`.app` 不能手工签**：`hap-sign-tool.jar` 的 `sign-app` 只收 `.hap/.bin/.elf`；拿本机三件套手工签 HAP
+  时返回 `11011005 Param is not trusted`（原因未定位）。要出 `.app` 只能配好 signingConfig 走
+  `assembleApp -p product=release -p buildMode=release`；没配时日志是 `Will skip sign 'app'`，产物为
+  `-unsigned.app`。证据：**实测**。
+- **`signingConfig` 的名字大小写敏感**：DevEco 生成的配置名是 `Release`，而 product 里写的是 `release` 时，
+  hvigor **不报错**，只在日志打 `Will skip sign 'hos_hap'` / `Will skip sign 'app'`，照样
+  `BUILD SUCCESSFUL`，产物是 unsigned。判成败只看 `verify-app`，不看退出码。证据：**实测**。
+- **`.app` 是整体签名，内含 HAP 不带签名块**（`buildOption.packOptions.appWithSignedPkg` 默认 false）；
+  `verify-app` 对 `.app` 通过、对包内 `entry-default.hap` 报 `No Hap Signing Block`，属正常形态。
+  AGC 是否接受未签内包**未验证**。证据：**实测**（验证通过时为 `Signing Block version: 3` +
+  `Digest verify result: true`，证书链顶层 `…\Release` 2026-10-19 → 2029-10-19）。
+- **发布签名包不能侧载**：`app-distribution-type: app_gallery` 的发布签名 HAP 用 `hdc install` 装，
+  报 `9568322 signature verification failed due to not trusted app source`。也就是说发布签名的包**只能**
+  经 AppGallery（邀请测试 / 上架）落到设备；"发给朋友直接装"要么让对方自己在 DevEco 里用调试签名构建，
+  要么走企业开发者的「指定设备发布」。证据：**实测**（先 `bm uninstall` 掉调试包再装发布 HAP）。
+  同 bundle 换签名可以装，但**必须先卸载**（不能 `-r` 覆盖）。
+- **邀请测试的硬约束**（官方文档经第三方转述，**未在本机验证**）：测试时间**最长 90 天**；
+  测试版本 `VersionCode` 不得低于已发布过的测试版本，两个在架测试版本不能 VersionName/VersionCode/构建版本全同；
+  测试用户按**测试群组**选取（≤30 组、累计 ≤10000 人），群组是账号级实体——**新版本沿用同一群组不需要重新邀请**；
+  分享链接在创建测试版本时生成，邀请码有效期 **30 天**、需拼到分享链接上；手动停止测试后，
+  已安装用户仍可用到「安装后 90 天」。
+- **分发通道容量**：邀请测试 10000 人 / 100 个在架版本；公开测试 1000 万次下载 / 1 个版本；
+  指定设备发布（原内部测试）100 台、**仅企业开发者**、版本 90 天。
+
+## 6. 证伪墓地（曾以为成立、已被推翻）
 
 > 目的：防止后续会话重复踏入同一死胡同。每条都给出**判别反例**。
 
@@ -200,7 +241,7 @@
     判别反例：真机拖 200px 窗口走了 365px（×1.83），且用户反复反馈"拖动过程中严重抖动"——增量闭环把异步生效的移动当同步用，落后量每条事件再累加一遍，正反馈震荡。
     正解是 `win.startMoving(offsetX, offsetY)`：WMS 直接接管光标跟随，同一手法 400px 拖拽窗口正好走 400px、轨迹 57 个采样点单调零回退（见本文 2.8）。
 
-## 6. 候选方案与待决策
+## 7. 候选方案与待决策
 
 | # | 候选 | 能解决 | 代价 | 谁来定 |
 | --- | --- | --- | --- | --- |

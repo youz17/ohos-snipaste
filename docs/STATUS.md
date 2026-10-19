@@ -10,8 +10,8 @@
 | 真机 | HAD-W32（HUAWEI MateBook Pro）；2026-10-16 实测 `const.ohos.apiversion=24`、`const.ohos.fullname=OpenHarmony-6.1.1.135`。本节早前记的 "HarmonyOS 7.0.0.23 / 设备 API 26" 与这台物理设备不符 —— 那台是何环境**未验证**（本机 `%LOCALAPPDATA%\Huawei\Emulator\deployed` 下有 "MateBook Pro" 镜像） |
 | 显示 | 3120x2080 px，1vp = 1.9px |
 | bundle | `com.youz.ohsnipaste` |
-| 代码基线 | `6d0a51a`（其后仅改文档的提交不动代码；需要回溯用 `git log --follow`） |
-| 产物 | `entry/build/default/outputs/default/entry-default-signed.hap`（调试签名，`build-profile.json5` 已配置 `signingConfigs: default`） |
+| 代码基线 | `a0ae247`（其后仅改文档的提交不动代码；需要回溯用 `git log --follow`） |
+| 产物 | 调试：`entry/build/default/outputs/default/entry-default-signed.hap`（`signingConfigs: default`）；发布：`build/outputs/release/*.app`（`release` product + `Release` 签名配置已预置，出包与验签步骤见 [README](../README.md) 的「发布签名与 `.app`」） |
 | 真机连接 | 2026-10-16 已连接（`hdc list targets` → `3QC0124C16000565`）。注意调试签名 profile 的 `device-ids` 只登记了另一台 UDID，换设备后须在 DevEco 重新自动签名才能安装 |
 
 ## 已真机跑通（2026-10-16）
@@ -67,7 +67,9 @@
 7. **待确认：常驻进程被杀后的自愈** —— 面板触发改成公共事件后，若 `...:entry:TrayAbility:0` 已死而图标还在（例如只有 `:statusBarView` 活着），点「开始截图」会没有任何反应（老写法靠 `startAbility` 顺带重启进程）。未实测这种状态的复现概率与表现。
 8. **待确认：面板开着时按快捷键** —— 快捷键那条路 `capture(0)` 不等待，而面板是 sceneboard 的窗口、不进"自身窗口"排除（见 SPEC-AND-TRUTH 3.2 / ARCHITECTURE 雷区）。此时冻结画面里可能带面板；未实测。
 9. **待确认：改键失败的回滚分支没被触发过** —— 逻辑是"`off` 旧组合 → `on` 新组合失败 → 把旧组合装回去 + 回报错误码 + 窗口回滚设置"，但本机 `Ctrl+C`、`Ctrl+Alt+Del` 都能注册成功，`4200002 / 4200003` 没能复现，这条分支只有代码没有实测（回滚代码见 `TrayAbility.applyHotkey` / `Welcome` 的 `listenHotkeyResult`）。
-10. **待确认：权限申请没回执会让 `CaptureFlow.busy` 卡死** —— 清空应用数据后触发截图（`CUSTOM_SCREEN_CAPTURE` 变回未授权），系统拉起 privacycenter 授权弹窗（`grantResult=[2]`），但应用侧**没有任何** `CUSTOM_SCREEN_CAPTURE granted=` 日志，`ensurePermission` 的 await 没回来，于是 `busy` 一直为 true，之后再按快捷键只会打 `skip: busy or too soon`，直到进程重启。弹窗被注入点击是点不掉的（VERIFY 坑 3），本轮没继续查。
+10. **上传 `.app` 走邀请测试** —— `build/outputs/release/ohos-snipaste-release-signed.app` 已出包并验签通过
+    （签发材料与验证方式见 SPEC-AND-TRUTH 第 5 节）；剩 AGC 侧动作：软件包管理上传 → 创建邀请测试版本
+    （测试时间 ≤90 天）→ 选测试群组 → 提交审核。
 
 ## 已知限制（结论与证据在 SPEC-AND-TRUTH，本文不复制）
 

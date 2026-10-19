@@ -48,6 +48,26 @@ $env:HVIGOR_USER_HOME='D:\tools\ohos-snipaste\.hvigor'   # 把 hvigor 缓存限�
 
 > `HVIGOR_USER_HOME` 让 hvigor 的缓存与目录联接留在工程内；受限沙箱会拒绝创建目录联接，构建需在不受限环境执行。
 
+### 发布签名与 `.app`（上架 / 邀请测试用）
+
+发布包和调试包是两套签名。工程里已预置 **`release` product**，它引用名为 **`Release`** 的 signingConfig
+（名字**大小写敏感**：对不上时 hvigor 不报错，只在日志里打 `Will skip sign 'hap'`，产物悄悄变成 unsigned）。
+这个 signingConfig **只能在 DevEco 里建**：hvigor 只接受 IDE 加密后的密码，手填明文会报
+`00303116 … less than 32`（证据见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md) 第 5 节）。
+
+1. `File > Project Structure > Signing Configs` → 建配置，名字与 product 里的 `signingConfig` 一字不差
+2. `Store file` 选 `.p12`、`Key alias` 填 `snipaste`、`Certpath` 选 `.cer`、`Profile` 选 `.p7b`，
+   密码填明文后 Apply（DevEco 加密后写回 `build-profile.json5`）
+3. 出包：`hvigorw assembleApp -p product=release -p buildMode=release --no-daemon`
+   → `build/outputs/release/ohos-snipaste-release-signed.app`
+4. 验收：`java -jar <SDK>/toolchains/lib/hap-sign-tool.jar verify-app -inFile <signed.app>`
+   —— 要看到 `Find Hap Signing Block success` + `Digest verify result: true` + `verify-app success`，
+   证书链顶层是发布证书（`…\Release`，3 年）。
+
+`.app` 是**整体签名**，包里那个 `entry-default.hap` 不带自己的签名块（hvigor 的
+`buildOption.packOptions.appWithSignedPkg` 默认 false）；若 AGC 报「包内 HAP 未签名」，把该开关打开重出。
+签名材料（`*.p7b` / `*.p12` / `*.cer` / `signing/`）已在 `.gitignore`。
+
 ## 安装与触发
 
 ```powershell
