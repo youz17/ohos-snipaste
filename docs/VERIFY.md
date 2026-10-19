@@ -107,9 +107,9 @@ Python+PIL/numpy 做精确判断（例如判断某个采样点是否等于预期
 4. 点图标：`uinput -M -g <iconX> <iconY> <iconX+1> <iconY> 80`。**面板要等 ≥3 秒**才出现（扩展冷启动实测约 2.4s），
    抢拍早了只能看到桌面。成功时日志依次出现 `StartUIExtension: element: com.youz.ohsnipaste/TrayStatusBarExt` →
    `TrayExt: onSessionCreate` → `AceUiExtensionComponent: StartUIExtension: pages/TrayPanel`。
-5. 面板里的按钮位置（实测）：「开始截图」居中的蓝色按钮（`#2563EB`，约 4.8 万像素）。位置会随面板漂移，
-   别硬编码：截图后在面板区域（本机 `x 2300..3120, y 1500..1960`）按 `#2563EB` 取每行像素数 > 300 的连续行段，
-   行段中点就是按钮的 y，x 取面板中线（本机 ≈ 2638~2700）。「退出」是下方浅灰底红字。
+5. 面板里的按钮位置（实测）：自上而下是「开始截图」（蓝色 `#2563EB`）、「使用说明」（浅灰底黑字）、「退出」（浅灰底红字）。
+   位置会随面板漂移，别硬编码：截图后在面板区域（本机 `x 2300..3120, y 1500..2050`）按 `#2563EB` 取每行像素数 > 300 的连续行段，
+   行段中点就是「开始截图」的 y，x 取面板中线；另外两个按钮按行距往下排（每个按钮 40vp + 间距 10vp）。
 6. **托盘图标自己也会漂**（随折叠区内容增减、重启后都会变，**不要硬编码坐标**）。定位办法：先截一张"应用在跑"
    的托盘展开图，`force-stop` 应用后再展开截一张，两张相减 —— 唯一消失的那一小块（约 29×29px）就是我们的图标。
    实测过两组值：`^` `(2390,2020)` / 图标 `(2502,1877)`（2026-10-16 白天），设备重启后变成 `^` `(2330,2005)` /
@@ -144,13 +144,49 @@ Start-Sleep -Seconds 4
 
 判据三条：
 
-1. 启动时有 `TrayAbility: hotkey registered: Ctrl+Shift+A`，按键时有 `TrayAbility: hotkey fired {...}`；
+1. 启动时有 `TrayAbility: hotkey registered: Ctrl + Shift + A`，按键时有 `TrayAbility: hotkey fired {...}`；
    若报 `4200002` / `4200003`，说明组合被系统或别的应用占了（排他），换键位再试。
+   （组合来自 preferences：改过键之后这行会打出新的组合名。）
 2. `capture ok: 3120x2080` + `SelectionPage: windowId=...`，dump 里选区窗口是 `[0,0,3120,2080]`。
 3. **按键没漏给前台窗口**：同一时刻 `hilog -x` 里不该有发给焦点窗口的 `WMSEvent: DispatchKeyEvent`。
    想更严格就先 `aa start -b com.huawei.hmos.notepad -a MainAbility`，让别的应用在前台再按。
 
 > 这条顺带给了一个**命令行触发截图**的办法（以前只有点面板一条路）：注入组合键即可。
+
+## 验证欢迎窗口 / 改键 / 托盘唤起
+
+```powershell
+# 首次启动：只能靠清数据回到"没看过欢迎窗口"的状态（代价：CUSTOM_SCREEN_CAPTURE 回到未授权，下次截图要人工点一次授权）
+& $hdc shell "bm clean -n com.youz.ohsnipaste -d"
+& $hdc shell "aa force-stop com.youz.ohsnipaste"
+& $hdc shell "aa start -a EntryAbility -b com.youz.ohsnipaste"
+Start-Sleep -Seconds 4
+& $hdc shell "hilog -x" | Select-String '/(EntryAbility|Welcome):'
+& $hdc shell "hidumper -s WindowManagerService -a '-a'" | Select-String 'ohsnipaste'
+```
+
+判据四条：
+
+1. **首次启动弹窗**：`onCreate ... welcome=yes` → `welcome window shown` → `welcome window 1064x988 px`，
+   窗口 dump 是 `ohsnipaste0 [ 1028 546 1064 988 ]`（560×520vp 居中）；截图里应看到不透明浅色窗口，
+   内容有名字、`Ctrl + Shift + A`、对比说明、Esc 提示。
+2. **后续启动不弹**：再 `aa start` 一次（或干脆 force-stop 后重开），日志只有
+   `onCreate ... welcome=no` → `repeat launch: main window minimized` → `bootstrap done`；
+   `hidumper` 里查不到窗口，屏幕截图上没有任何窗口（含透明窗口）。
+3. **改键（跨进程 + 持久化）**：点窗口里的「修改」（先截图定位，本机 ≈ `(1989,877)`；点了之后按钮变「取消」、
+   出现"请按住 Ctrl / Shift / Alt 再按一个键"），注入新组合：
+   ```powershell
+   & $hdc shell "uinput -K -d 2072 -d 2045 -d 2017 -i 60 -u 2017 -u 2045 -u 2072"   # Ctrl+Alt+A
+   ```
+   应依次出现 `HotkeySignal: hotkey change published` → 常驻进程 `hotkey re-registered: Ctrl + Alt + A` →
+   `Welcome: hotkey applied`，界面显示「已生效」。再 `aa force-stop` + `aa start`，冷启动日志应为
+   `hotkey registered: Ctrl + Alt + A`（证明落盘生效）。改完记得改回来。
+4. **托盘唤起 / Esc 退出**：托盘面板「使用说明」→ `TrayPanel: welcome window requested` →
+   `onCreate ... forced=yes` → 窗口出现；把窗口最小化（dump 里 ZOrd 变 `-1`）再点一次 → `onNewWant -> bring
+   welcome window to front` / `welcome window restored`，ZOrd 回到正数。最后 `uinput -K -d 2070 -u 2070` →
+   `EntryAbility: onDestroy`、`hidumper` 无窗口、`ps -ef` 里只剩常驻进程。
+
+> 面板按钮位置会随内容漂：本轮面板高度从 176vp 调到 232vp（多一个「使用说明」），旧坐标不再可用。
 
 ## 典型验证序列
 
@@ -164,8 +200,8 @@ Start-Sleep -Seconds 10
 Start-Sleep -Milliseconds 900
 & $hdc shell "uinput -M -g 2502 1877 2503 1877 80"
 Start-Sleep -Seconds 6                                          # 面板冷启动 ~2.4s
-# 面板「开始截图」：蓝按钮 #2563EB，本机 ≈ (2638, 1769)
-& $hdc shell "uinput -M -g 2638 1769 2639 1769 80"
+# 面板「开始截图」：蓝按钮 #2563EB，本机 ≈ (2706, 1668)（面板改成 232vp 高、多一个「使用说明」之后的位置）
+& $hdc shell "uinput -M -g 2706 1668 2707 1668 80"
 Start-Sleep -Seconds 4
 & $hdc shell "uinput -M -g 400 250 1000 650 400"                # 框选
 Start-Sleep -Seconds 2

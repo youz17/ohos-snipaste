@@ -10,7 +10,7 @@
 | 真机 | HAD-W32（HUAWEI MateBook Pro）；2026-10-16 实测 `const.ohos.apiversion=24`、`const.ohos.fullname=OpenHarmony-6.1.1.135`。本节早前记的 "HarmonyOS 7.0.0.23 / 设备 API 26" 与这台物理设备不符 —— 那台是何环境**未验证**（本机 `%LOCALAPPDATA%\Huawei\Emulator\deployed` 下有 "MateBook Pro" 镜像） |
 | 显示 | 3120x2080 px，1vp = 1.9px |
 | bundle | `com.youz.ohsnipaste` |
-| 代码基线 | `e131c59`（其后仅改文档的提交不动代码；需要回溯用 `git log --follow`） |
+| 代码基线 | `6d0a51a`（其后仅改文档的提交不动代码；需要回溯用 `git log --follow`） |
 | 产物 | `entry/build/default/outputs/default/entry-default-signed.hap`（调试签名，`build-profile.json5` 已配置 `signingConfigs: default`） |
 | 真机连接 | 2026-10-16 已连接（`hdc list targets` → `3QC0124C16000565`）。注意调试签名 profile 的 `device-ids` 只登记了另一台 UDID，换设备后须在 DevEco 重新自动签名才能安装 |
 
@@ -33,6 +33,10 @@
 | 截图全程不进任务栏 | ✅ | 面板触发截图 → 选区窗口出现 → Esc 关掉，三个时刻截同一块任务栏裁剪区都只有 WPS；日志里 `refreshSCBSceneContainerSession : add` 只出现 `SelectionAbility`，没有 `TrayAbility`（见 [SPEC-AND-TRUTH.md](SPEC-AND-TRUTH.md) 3.1 / 墓地 10） |
 | 托盘面板截图不带面板 | ✅ | 冻结画面里面板区（x 2250-3050 / y 1600-2000）只剩被压暗的桌面，没有面板与蓝按钮；触发到截图间隔 504ms，`PANEL_SETTLE_MS` 真的生效（此前被 `pages/Index.onPageShow` 的立即触发抢跑） |
 | 全局快捷键截图 | ✅ | 常驻进程注册 `Ctrl+Shift+A`（`hotkey registered`），注入后 `hotkey fired` → `capture ok: 3120x2080` → `SelectionPage windowId=149`；应用当时**没有任何窗口**，焦点在系统「备忘录」（`notepad0 [496,295,2090,1394]`），且该窗口没收到 `DispatchKeyEvent`（按键被系统消费，不是前台普通按键） |
+| 欢迎窗口（首次启动） | ✅ | 清空应用数据后冷启动 → `onCreate ... welcome=yes` / `welcome window shown` / `welcome window 1064x988 px`，窗口 `[1028 546 1064 988]` 居中、不透明 `#F5F6F7`，内容含名字、快捷键（含「修改」）、对比说明、Esc 提示；Esc 关闭 → `onDestroy`、`hidumper` 无窗口、常驻进程仍在 |
+| 后续启动不弹窗 | ✅ | `welcome=no` 时 `repeat launch: main window minimized`，约 20ms 内窗口 ZOrd 变 `-1`；`welcome=no` 冷启动从创建到 `bootstrap done` 约 750ms，随后 `hidumper` 里查不到窗口；常驻进程已在（16000068）的那次 43ms 内就退出。截图（启动后约 450ms）与任务栏截图都干净 |
+| 改键（跨进程 + 持久化） | ✅ | 欢迎窗口「修改」→ 捕获 Ctrl+Alt+A → `HotkeySignal: hotkey change published` → 常驻进程 `hotkey re-registered: Ctrl + Alt + A` → `Welcome: hotkey applied`，界面显示「已生效」；`aa force-stop` 后冷启动日志是 `hotkey registered: Ctrl + Alt + A`（持久化生效）；随后改回 `Ctrl + Shift + A` 同样成功 |
+| 托盘面板「使用说明」 | ✅ | `TrayPanel: welcome window requested` → `EntryAbility: onCreate ... forced=yes` → 窗口出现（`TrayAbility already running` 后不退出）；把窗口最小化（ZOrd `-1`）再点一次 → `onNewWant -> bring welcome window to front` / `welcome window restored`，ZOrd 回到 `110` |
 
 ## 模块健康度
 
@@ -45,8 +49,9 @@
 | 比较 | `common/ImageDiff.ets` + `common/PinRegistry.ets` | ⚠️ 算法按需求实现，基点在框选位置变化后失准（限制，见 SPEC-AND-TRUTH 候选 3） |
 | 分享 | `common/ImageShare.ets` | ✅ 剪贴板 + 系统保存对话框 |
 | 传值 / 落盘 | `common/PinPayload.ets`、`common/PinStore.ets` | ✅ 窗口 id + AppStorage；fd 解码，固定 RGBA_8888 |
-| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayAbility.ets` + `tray/CaptureSignal.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、挂载常驻（独立进程、无窗口、无页面）、左键面板（开始截图 / 退出）均真机跑通；触发有两条：同应用自定义公共事件（面板）与 `inputConsumer.on('hotkeyChange')`（Ctrl+Shift+A，见 SPEC-AND-TRUTH 3.2）；⚠️ 面板冷启动约 2.4s；⚠️ 挂载首次调用报 `16000067`，靠有界重试兜住 |
-| 引导 | `entryability/EntryAbility.ets` | ✅ 注册托盘 → 挂载常驻进程 → 等握手文件 → `terminateSelf`；⚠️ 握手文件用 `fs.accessSync`（返回 boolean，不是抛异常） |
+| 常驻入口 | `tray/TrayEntry.ets` + `tray/TrayAbility.ets` + `tray/CaptureSignal.ets` + `tray/HotkeySignal.ets` + `tray/TrayStatusBarExt.ets` + `pages/TrayPanel.ets` | ✅ 注册/摘除、挂载常驻（独立进程、无窗口、无页面）、左键面板（开始截图 / 使用说明 / 退出）均真机跑通；触发有两条：同应用自定义公共事件（面板）与 `inputConsumer.on('hotkeyChange')`（默认为 Ctrl+Shift+A、可在欢迎窗口改，见 SPEC-AND-TRUTH 3.2）；⚠️ 面板冷启动约 2.4s；⚠️ 挂载首次调用报 `16000067`，靠有界重试兜住 |
+| 欢迎窗口 / 设置 | `pages/Welcome.ets` + `common/Hotkey.ets` + `tray/HotkeySignal.ets` | ✅ 首次启动自动弹一次（标记 `welcome_seen` 落 preferences），后续启动不弹；Esc 关窗即 `terminateSelf`；托盘点「使用说明」可再唤起，已最小化时走 `onNewWant` + `show()` 唤回；改键走「先落盘 → 公共事件 → 常驻进程重注册 → 回执」四步，成功/失败都会更新界面 |
+| 引导 | `entryability/EntryAbility.ets` | ✅ 注册托盘 → 挂载常驻进程 → 等握手文件 → `terminateSelf`（欢迎窗口那一次不退出）；非首次启动先 `minimize()` 主窗口，实测不再闪空白窗；⚠️ 握手文件用 `fs.accessSync`（返回 boolean，不是抛异常）；⚠️ `16000068` 时跳过等握手 |
 
 ## 开放待办（做完即删）
 
@@ -58,9 +63,11 @@
 3. 多贴图管理（透明度、滚轮缩放、一键关全部、贴图列表）。
 4. 比较入口 UX（贴图右键菜单「设为比较基准」等）。
 5. `ImageDiff` 单元测试（纯计算，可脱离设备）。
-6. **待确认：暗色模式启动窗口** —— `entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`（`base` 已改 `#01000000`）。暗色模式下引导瞬间可能仍冒出纯黑窗口；未实测。
+6. **待确认：暗色模式启动窗口** —— `EntryAbility` 已改用不透明的 `welcome_background`（`#F5F6F7`，两种模式同一份）；但 `PasteAbility` / `SelectionAbility` 仍用 `start_window_background`，而 `dark/element/color.json` 里它还是 `#000000`（`base` 是 `#01000000`）。暗色模式下贴图/选区窗口起来的瞬间可能冒一下纯黑；未实测。
 7. **待确认：常驻进程被杀后的自愈** —— 面板触发改成公共事件后，若 `...:entry:TrayAbility:0` 已死而图标还在（例如只有 `:statusBarView` 活着），点「开始截图」会没有任何反应（老写法靠 `startAbility` 顺带重启进程）。未实测这种状态的复现概率与表现。
 8. **待确认：面板开着时按快捷键** —— 快捷键那条路 `capture(0)` 不等待，而面板是 sceneboard 的窗口、不进"自身窗口"排除（见 SPEC-AND-TRUTH 3.2 / ARCHITECTURE 雷区）。此时冻结画面里可能带面板；未实测。
+9. **待确认：改键失败的回滚分支没被触发过** —— 逻辑是"`off` 旧组合 → `on` 新组合失败 → 把旧组合装回去 + 回报错误码 + 窗口回滚设置"，但本机 `Ctrl+C`、`Ctrl+Alt+Del` 都能注册成功，`4200002 / 4200003` 没能复现，这条分支只有代码没有实测（回滚代码见 `TrayAbility.applyHotkey` / `Welcome` 的 `listenHotkeyResult`）。
+10. **待确认：权限申请没回执会让 `CaptureFlow.busy` 卡死** —— 清空应用数据后触发截图（`CUSTOM_SCREEN_CAPTURE` 变回未授权），系统拉起 privacycenter 授权弹窗（`grantResult=[2]`），但应用侧**没有任何** `CUSTOM_SCREEN_CAPTURE granted=` 日志，`ensurePermission` 的 await 没回来，于是 `busy` 一直为 true，之后再按快捷键只会打 `skip: busy or too soon`，直到进程重启。弹窗被注入点击是点不掉的（VERIFY 坑 3），本轮没继续查。
 
 ## 已知限制（结论与证据在 SPEC-AND-TRUTH，本文不复制）
 
@@ -68,7 +75,7 @@
 - 贴图窗口四角有系统给的约 40px 圆角（2.3 / 2.4）
 - 托盘图标只在应用**还有进程活着**时存在；「退出」或进程被杀后图标消失（SPEC-AND-TRUTH 3.3）
 - 托盘图标左键**必然弹面板**，取消不掉；"点一下直接截图"平台不支持（3.3）
-- 全局快捷键固定为 Ctrl+Shift+A：修饰键必填（做不出裸 F1）、组合全局排他、目前没有改键入口（3.2）
+- 全局快捷键**修饰键必填**（做不出裸 F1）、组合**全局排他**；默认 Ctrl+Shift+A，可在欢迎窗口里改（3.2）
 - 图片比较的基点不稳健（候选 3）
 
 ## 技术债与触发重构的阈值

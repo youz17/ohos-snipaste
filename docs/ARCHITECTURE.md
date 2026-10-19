@@ -15,21 +15,22 @@ Snipaste 的核心是"整个屏幕都是画布，选中什么就贴什么"。鸿
 
 | Ability / 扩展 | 窗口形态 | 职责 |
 | --- | --- | --- |
-| `EntryAbility` | 只借系统的启动窗口，**不加载任何内容**；引导结束即 `terminateSelf` | 引导：注册托盘图标 → 拉起 `TrayAbility` → 确认它起来后退出。之后应用**没有任何窗口**，任务栏也就不占位 |
-| `TrayAbility` | **没有窗口**：`STARTUP_HIDE` 挂到状态栏项上、**不 `loadContent`**，跑在独立进程 `...:entry:TrayAbility:0` | 常驻载体：托盘图标活在这个进程里；订阅跨进程信号（`tray/CaptureSignal.ets`）跑 `CaptureFlow` |
+| `EntryAbility` | 主窗口：首次启动显示欢迎窗口（`pages/Welcome.ets`，居中 560×520vp、不透明底）；其余启动一露头就 `minimize()`，引导结束即 `terminateSelf` | 引导：注册托盘图标 → 拉起 `TrayAbility` → 确认它起来后退出。只有欢迎窗口这一次会把主窗口留着，关掉后同样退出，应用回到"没有任何窗口" |
+| `TrayAbility` | **没有窗口**：`STARTUP_HIDE` 挂到状态栏项上、**不 `loadContent`**，跑在独立进程 `...:entry:TrayAbility:0` | 常驻载体：托盘图标活在这个进程里；订阅跨进程信号（`tray/CaptureSignal.ets`）跑 `CaptureFlow`；按设置注册全局快捷键，并处理改键请求（`tray/HotkeySignal.ets`） |
 | `SelectionAbility` | 全屏、无装饰、去标题按钮，`setWindowLayoutFullScreen` + `maximize()` 之后 `setWindowTopmost(true)`（singleton） | 铺冻结画面，自绘遮罩 / 选区 / 8 个把手 / 放大镜 / 操作条 |
 | `PasteAbility` | 每张图一个窗口，无装饰无阴影、`setWindowTopmost(true)`，尺寸 = 图片像素尺寸（multiton） | 显示贴图或差异图；拖动移动、方向键微调、右键菜单 |
-| `TrayStatusBarExt`（`type: statusBarView`，`exported: true`） | 无独立窗口；左键面板由 sceneboard 承载（页面 `pages/TrayPanel.ets`），跑在独立进程 `:statusBarView` | 托盘图标的左键面板：开始截图 / 退出 |
+| `TrayStatusBarExt`（`type: statusBarView`，`exported: true`） | 无独立窗口；左键面板由 sceneboard 承载（页面 `pages/TrayPanel.ets`），跑在独立进程 `:statusBarView` | 托盘图标的左键面板：开始截图 / 使用说明 / 退出 |
 
-入口页（`pages/Index.ets`）已删除：两个 Ability 都不需要承载内容 —— `EntryAbility` 引导完就退出，
-`TrayAbility` 是 `STARTUP_HIDE` 挂载且永不显示窗口的常驻进程。用户全程只看到选区窗口和贴图窗口。
+入口页 `pages/Index.ets` 已删除，但**多了一个欢迎窗口**（`pages/Welcome.ets`，只在首次启动或托盘点「使用说明」时出现）：
+它不是业务页，只负责自我介绍与改全局快捷键。用户日常看到的仍然只有选区窗口和贴图窗口。
 
 ## 触发链路
 
 两个入口，终点同一条 `CaptureFlow.run()`，都在常驻进程 `TrayAbility` 里接：
 
-1. **全局快捷键 Ctrl+Shift+A**：`onCreate` 里 `inputConsumer.on('hotkeyChange', …)` 注册一次
-   （`registerHotkey`），按键回调直接 `CaptureFlow.run()`，不加延迟。
+1. **全局快捷键（默认 Ctrl+Shift+A，可在欢迎窗口里改）**：`TrayAbility.onCreate` 里按设置注册一次
+   （`registerHotkey`），按键回调直接 `CaptureFlow.run()`，不加延迟；改键请求由 `listenHotkeyChange`
+   接住后 `off` 旧组合 + `on` 新组合（`applyHotkey`）。
 2. **托盘面板「开始截图」**：**跨进程信号**（`commonEventManager` 自定义事件，`tray/CaptureSignal.ets`）
    → 常驻进程的订阅回调 → 等 `PANEL_SETTLE_MS = 500` 再 `CaptureFlow.run()`（面板是 sceneboard 的窗口，
    要等它收走才不会进冻结画面）。
@@ -78,6 +79,8 @@ sceneboard 的窗口，要等它收走才不会进冻结画面；快捷键触发
     └─ onSessionCreate → session.loadContent('pages/TrayPanel')
          ├─ 开始截图 → publish('com.youz.ohsnipaste.action.CAPTURE')
          │              → 常驻进程 CaptureSignal 订阅回调 → TrayAbility.capture() → CaptureFlow
+         ├─ 使用说明 → UIExtensionContext.startAbility(EntryAbility, {about:'1'})
+         │              → 欢迎窗口重新出现（已开着/最小化时走 onNewWant 唤回前台）
          └─ 退出     → removeFromStatusBar + ApplicationContext.killAllProcesses(true)
 ```
 
@@ -86,6 +89,52 @@ sceneboard 的窗口，要等它收走才不会进冻结画面；快捷键触发
 对应深色背景、`black` 对应浅色背景）；彩色的 `screenshot-icon.svg` 渲染成 `media/panel_icon.png`
 （128×128）给面板当徽标，并拆成背景/前景两层重绘应用的分层图标
 （`AppScope` 与 `entry` 各一份 `background.png` / `foreground.png`，1024×1024）。
+
+## 欢迎窗口与快捷键设置
+
+`pages/Welcome.ets` 挂在 `EntryAbility` 的主窗口上：应用名、全局快捷键（可改）、图片对比的用法、Esc 退出提示。
+窗口固定 560×520vp、居中、不透明底（`WELCOME_BG = #F5F6F7`），带系统标题栏。
+
+```
+什么时候出现
+  onCreate 读 want.parameters.about === '1'（托盘点「使用说明」）或 !files 里的 welcome_seen
+    ├─ 是 → onWindowStageCreate 里 setupWelcome：markWelcomeSeen（先记账）+ resize/move + loadContent
+    │        bootstrap 里确认常驻进程就绪后**不**退出，等用户关窗口
+    └─ 否 → onWindowStageCreate 里立刻 minimize()，bootstrap 照旧 terminateSelf（屏幕上什么都不弹）
+
+关窗口
+  Esc（页面根节点 onKeyEvent，2070）→ UIAbilityContext.terminateSelf；标题栏 ✕ 走系统销毁，
+  结果一样：EntryAbility onDestroy，应用回到"只有托盘图标"
+
+再唤起（已开着 / 已最小化）
+  托盘面板「使用说明」→ UIExtensionContext.startAbility(EntryAbility, {about:'1'})
+  singleton 命中 → onNewWant → window.Window.show() 把窗口唤回前台
+```
+
+设置落在 preferences `settings` 库（`common/Hotkey.ets`）：
+
+| key | 值 | 用途 |
+| --- | --- | --- |
+| `welcome_seen` | `boolean` | 首次启动看过欢迎窗口后置 true，此后从桌面/任务栏启动不再弹 |
+| `hotkey` | `"2072,2047,2017"` | 前置修饰键 + 最后一个主键，冷启动时由常驻进程读出注册 |
+
+改键是一次**跨进程**的两步动作，因为注册在常驻进程、界面在引导进程：
+
+```
+Welcome（EntryAbility 进程）                       TrayAbility（常驻进程）
+  saveHotkey(combo)             ── 先落盘
+  requestHotkeyChange(pre,final) ── 公共事件 HOTKEY_CHANGE ──▶ listenHotkeyChange
+                                                              off(旧 options)
+                                                              on(新 options)
+                                                              ↳ 成功：reportHotkeyResult(true)
+                                                              ↳ 失败：重新 on(旧) 后 reportHotkeyResult(false, code)
+  listenHotkeyResult ───────────────── 公共事件 HOTKEY_RESULT ──┘
+    ├─ ok：界面换成新组合，提示"已生效"
+    └─ 失败：界面与磁盘都回滚到旧组合，提示错误码
+```
+
+为什么要靠事件传组合、而不是让常驻进程自己再读一次 preferences：两个进程各有一份 preferences 缓存，
+改完立刻读容易读到旧值；事件把值直接送到，落盘只服务于"下次冷启动"。
 
 ## 数据流
 
@@ -185,7 +234,12 @@ PasteAbility（每张图一个）
 | 贴图窗口 ZOrd 比选区高，会挡住操作条 | 选区窗口在 `maximize()` **之后**再 `setWindowTopmost(true)` |
 | 系统对主窗口有最小尺寸（约 608x136 px） | 贴图页用同图放大模糊铺底填补（`ImageFit.Cover` + `blur(40)`） |
 | `resize` 收 vp、`moveWindowTo` 收 px | 换算时显式乘 `densityPixels`（`entryability/EntryAbility.ets`） |
-| 启动窗口相关 | 必须 `loadContent`；`startWindowIcon` 是 schema 必填；底色见 SPEC-AND-TRUTH 2.7 |
+| 启动窗口相关 | 必须 `loadContent`；`startWindowIcon` 是 schema 必填；底色见 SPEC-AND-TRUTH 2.7。`EntryAbility` 的启动窗口已换成**不透明**的 `$color:welcome_background`（欢迎窗口要露脸），其余 Ability 仍是近透明的 `start_window_background` |
+| 非首次启动闪一个空白窗口 | 主窗口在 `onWindowStageCreate` 里立刻 `minimize()`，引导结束 `terminateSelf`；实测 `welcome=no` 那次窗口 ZOrd 直接 `-1`、最终 `hidumper` 里查不到窗口 |
+| `setWindowBackgroundColor` 写在 `onWindowStageCreate` 里同步调 | 报 `1300002 This window state is abnormal`，而且**同一 try 里的 resize/move 会被一起跳过**（窗口保持默认 1100×734vp）。放到 `loadContent(...).then()` 里再设，或给每步单独 try/catch |
+| `startAbility(TrayAbility)` 返回 `16000068` | 常驻进程早就在了，这次**不会**再落握手文件 —— 别去等 `tray-ready`，否则白等 6s 并留下一个隐藏窗口（`EntryAbility.trayAlreadyRunning`） |
+| 改键后重新注册全局快捷键 | `inputConsumer.off('hotkeyChange', options)` 必须传**同一个 options 对象**，所以要把当前注册的对象留引用；被占用时 `on` 会抛错，回滚就是把旧对象再 `on` 一次并回报失败 |
+| 托盘面板里 `startAbility` | 面板是 `UIExtensionContext`，它**有** `startAbility`（`ExtensionContext` 基类没有，容易误判）；`bundleName` 用 `ctx.extensionAbilityInfo.bundleName` |
 | `statusBarView` 扩展的 `exported` | 官方示例写 `true`，本项目保持一致；但本机实测 `false` 时 sceneboard 照样能拉起该扩展，"必须 true"不成立（见 SPEC-AND-TRUTH 第 5 节墓地） |
 | `image` 模块解不了 SVG | 图形资源先离屏光栅化成 PNG 再打进包（`media/tray_icon_*.png`、`media/panel_icon.png`、分层图标 `background/foreground.png`） |
 | 托盘面板是 UIExtension，冷启动约 2.4s | 面板要等 sceneboard 拉起 `:statusBarView` 进程才出现，验证时抢拍要等 ≥3s |

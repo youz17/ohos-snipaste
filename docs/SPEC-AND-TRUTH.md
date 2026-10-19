@@ -78,8 +78,11 @@
 - 结论：系统在窗口内容绘制完成前显示启动窗口，**不 `loadContent` 它就不消失**（连同 `startWindowIcon` 一直挂在屏幕中央）；`startWindowIcon` 是 schema 必填项，删掉构建报 `Schema validate failed`。
 - 边界：这条只对**会被显示的窗口**成立。`STARTUP_HIDE` 挂载、且引导之后**再也不会被 `startAbility` 唤醒**的常驻 Ability，不 `loadContent` 也不会留下启动窗口 —— 实测 `TrayAbility` 去掉 `loadContent` 后引导照常（握手文件照写），`hidumper -s WindowManagerService` 里没有它的窗口记录，屏幕上也没有启动窗口。
 - 结论：底色由资源 `start_window_background` 决定，`base` 已改为 `#01000000`（近全透明；`#00000000` 会被当成未设置）。
+- 结论：底色是**按 Ability 配**的。`EntryAbility` 已改用不透明的 `$color:welcome_background`（`#F5F6F7`），因为它首次启动要显示欢迎窗口，透明底会像个幽灵框；其余 Ability 仍用近透明的 `start_window_background`。
+- 结论：`window.setWindowBackgroundColor` 在 `onWindowStageCreate` 里**同步**调用会报 `1300002 This window state is abnormal`（窗口还没进 normal 状态），要等 `loadContent` 完成后再设。
+- 结论：**不需要露面的窗口可以一露头就收走**。`welcome_seen` 之后的启动在 `onWindowStageCreate` 里直接 `mainWindow.minimize()`，实测窗口 ZOrd 立刻变 `-1`，`terminateSelf` 后 `hidumper` 里查不到窗口记录，启动约 450ms 后的屏幕截图是干净桌面（没有空白/透明窗口）。
 - 变更生效的三项配置有 WMS 日志佐证（`OnSetWindowDecorVisible` / `OnSetWindowBackgroundColorSync color=#01000000` / `OnSetWindowShadowEnabled`）。
-- ⚠️ **未验证**：`entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`，暗色模式下激活瞬间可能仍冒出纯黑窗口 —— 登记在 [STATUS.md](STATUS.md) 待确认。
+- ⚠️ **未验证**：`entry/src/main/resources/dark/element/color.json` 的 `start_window_background` 仍是 `#000000`，暗色模式下贴图/选区窗口起来的瞬间可能仍冒出纯黑 —— 登记在 [STATUS.md](STATUS.md) 待确认（`EntryAbility` 已不受影响）。
 
 ### 2.8 拖动无装饰窗口：用 `window.startMoving`，别自己发 `moveWindowTo`
 
@@ -106,11 +109,18 @@
 
 - 结论：`inputConsumer.on('hotkeyChange')`（`@kit.InputKit`，API 14）是**全局**快捷键订阅 —— 官方参考页标题
   就叫「全局快捷键」，接口描述是"订阅应用快捷键，获取满足条件的组合按键输入事件"；**不需要任何权限、不要求前台**。
-  应用现状：常驻进程里注册 **Ctrl+Shift+A**，按下直接走截图链路（`tray/TrayAbility.ets` 的 `registerHotkey`）。
+  应用现状：常驻进程里按设置注册（默认 **Ctrl+Shift+A**，可在欢迎窗口里改），按下直接走截图链路
+  （`tray/TrayAbility.ets` 的 `registerHotkey`）。
 - 实测（2026-10-19）：注册在常驻进程、应用**没有任何窗口**、焦点在别的会话时，注入 `Ctrl+Shift+A` →
   `hotkey fired {"preKeys":[2047,2072],"finalKey":2017}` → `capture ok: 3120x2080` → `SelectionPage windowId=149`；
   焦点在系统「备忘录」窗口（`notepad0 [496,295,2090,1394]`）上时同样成功，且同一时刻**没有**向焦点窗口派发
   `DispatchKeyEvent` —— 按键被系统消费，不是"前台应用的普通按键"。
+- 实测（2026-10-19）**运行期换键**：`off(旧 options)` + `on(新 options)` 可以在进程不重启的情况下生效 ——
+  窗口进程 `HotkeySignal: hotkey change published` → 常驻进程 `hotkey re-registered: Ctrl + Alt + A` →
+  再注入 `Ctrl+Alt+A` 得到 `hotkey fired {"preKeys":[2045,2072],"finalKey":2017}`；`force-stop` 后冷启动日志是
+  `hotkey registered: Ctrl + Alt + A`（组合来自 preferences）。改回 `Ctrl+Shift+A` 同样一次成功。
+- 实测（2026-10-19）**本机没占的组合比想象中多**：`Ctrl+C`、`Ctrl+Alt+Del` 都能注册成功，所以
+  `4200002 / 4200003` 这两条失败分支本轮**没能复现**（回滚逻辑只有代码、没有实测）。
 - 约束：
   - **必须注册在常驻进程**：`EntryAbility` 引导完 `terminateSelf`，注册随进程消失。早前"注册成功但按键不回调"
     就是在这个形态下测的（见第 5 节墓地 1）。
@@ -203,6 +213,5 @@
 | 7 | 贴图窗口去掉按钮、能力收进右键菜单后，是否再留一个最小的可见操作入口 | 贴图窗口上现在没有任何可见按钮，新用户可能找不到菜单 | 小（会重新挡住一点图片） | 你 |
 | 8 | 托盘入口从"左键面板"改成"右键菜单 + `menuAction` 直接启动 ability" | 省掉面板这一层 | 小；但要从右键触发，且 `menuAction` 是**启动 ability**，会重新把应用拉进任务栏（见 3.1），除非改成同时投递公共事件 | 你 |
 | 9 | 贴图窗口禁止被窗口管理器吸附/改尺寸（`setWindowLimits` 把 min=max=图片尺寸） | 拖到屏幕边缘时贴图不会被吸成半屏（见 2.8 副作用） | 小；需实测能否拦下吸附、并处理系统最小尺寸 608x136 的钳制（要按 `resize` 后的实际 `windowRect` 设限） | 你 |
-| 10 | 快捷键可换键：面板里展示当前组合，内置 2~3 个备选，注册报 `4200002/4200003` 时自动降级到下一个 | 现在写死 Ctrl+Shift+A，与别的应用撞车就只能改代码 | 小；要重注册（`off` + `on`）并把选择持久化 | 你 |
 
 （未列入的候选：画中画 —— 已排除，理由见本文 2.2。）

@@ -15,8 +15,9 @@ HarmonyOS NEXT（ArkTS / Stage 模型）上的 Snipaste 类截图 + 贴图工具
 | 复制 / 保存 | 写系统剪贴板 / 走系统保存对话框导出 PNG |
 | 贴图 | 独立无装饰置顶窗口、按原始像素 1:1 显示、拖动移动、右键菜单（复制 / 保存为图片… / 关闭） |
 | 图片比较 | 与最后一张贴图对齐后逐像素比对，差异图另开窗口并给出一行结论 |
-| 常驻入口 | 状态栏右下角折叠区（`^`）里的托盘图标；左键面板提供「开始截图 / 退出」。图标由挂在状态栏项上的常驻进程持有，应用**没有窗口、也不占任务栏** |
-| 全局快捷键 | **Ctrl+Shift+A** 直接起截图（`inputConsumer.on('hotkeyChange')`，无需权限、应用没有窗口也生效） |
+| 常驻入口 | 状态栏右下角折叠区（`^`）里的托盘图标；左键面板提供「开始截图 / 使用说明 / 退出」。图标由挂在状态栏项上的常驻进程持有，应用**没有窗口、也不占任务栏** |
+| 全局快捷键 | 默认 **Ctrl+Shift+A** 直接起截图（`inputConsumer.on('hotkeyChange')`，无需权限、应用没有窗口也生效）；可在欢迎窗口里改并持久化 |
+| 欢迎窗口 | 首次启动自动弹一次（不透明窗口：应用名、快捷键介绍与修改、对比功能说明、Esc 退出），之后从托盘面板「使用说明」再打开 |
 | 降级 | 未授权或截图失败 → 系统截图选择器 `screenshot.pick()`，把结果直接贴出 |
 
 平台做不到（每条都有实测证据，见 [docs/SPEC-AND-TRUTH.md](docs/SPEC-AND-TRUTH.md)）：
@@ -55,15 +56,17 @@ hdc shell aa start -a EntryAbility -b com.youz.ohsnipaste                     # 
 hdc shell aa force-stop com.youz.ohsnipaste                                   # 清场
 ```
 
-冷启动只做引导：注册托盘图标 → 拉起常驻的 `TrayAbility` → 主 Ability 退出，此后应用没有任何窗口。
+冷启动只做引导：注册托盘图标 → 拉起常驻的 `TrayAbility` → 主 Ability 退出，此后应用没有任何窗口
+（唯一例外是首次启动的欢迎窗口，关掉之后同样回到"无窗口"）。
 
 两条触发路径，终点都是同一个 `CaptureFlow`：
 
-- **全局快捷键 Ctrl+Shift+A**：在常驻进程里 `inputConsumer.on('hotkeyChange')` 注册（无需权限、不要求前台），
-  按下即截图。修饰键必填、组合全局排他（被系统或别的应用占用时注册会报 `4200002` / `4200003`）。
+- **全局快捷键（默认 Ctrl+Shift+A）**：在常驻进程里 `inputConsumer.on('hotkeyChange')` 注册（无需权限、不要求前台），
+  按下即截图。修饰键必填、组合全局排他（被系统或别的应用占用时注册会报 `4200002` / `4200003`）；
+  组合存在 preferences 里，欢迎窗口改键后立刻重注册。
 - **状态栏托盘图标**：点右下角折叠区（`^`）里的图标 → 面板 → 「开始截图」。它发给常驻进程一个**应用内公共事件**
-  （不是 `startAbility` —— 那会让应用重新出现在任务栏），并且要等 500ms 让面板收走再截。「退出」会摘掉图标并结束应用
-  （图标只在应用还有进程活着时存在）。
+  （不是 `startAbility` —— 那会让应用重新出现在任务栏），并且要等 500ms 让面板收走再截。「使用说明」重新打开欢迎窗口，
+  「退出」会摘掉图标并结束应用（图标只在应用还有进程活着时存在）。
 
 触发链路与静默期/去抖规则见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
@@ -93,20 +96,23 @@ entry/src/main/
 │   │   ├── PinRegistry.ets      # 进程内登记开着的贴图，提供比较基准
 │   │   ├── ImageDiff.ets        # 基点对齐 + 逐像素比较 + 差异图
 │   │   ├── ImageShare.ets       # 剪贴板 / 系统保存对话框
+│   │   ├── Hotkey.ets           # 默认快捷键、键名显示、设置读写（首次标记 + 快捷键持久化）
 │   │   └── Launcher.ets         # startAbility 统一入口（选区 / 贴图）
-│   ├── entryability/EntryAbility.ets               # 引导：注册托盘 + 拉起常驻进程后自己退出
+│   ├── entryability/EntryAbility.ets               # 引导：注册托盘 + 拉起常驻进程；首次启动显示欢迎窗口
 │   ├── selectionability/SelectionAbility.ets       # 全屏无装饰置顶的选区窗口
 │   ├── pasteability/PasteAbility.ets               # 每张贴图一个无装饰置顶窗口
 │   ├── entrybackupability/EntryBackupAbility.ets   # 系统备份扩展（模板自带）
 │   ├── tray/
 │   │   ├── TrayEntry.ets        # 状态栏托盘图标：注册 addToStatusBar / 摘除 removeFromStatusBar
-│   │   ├── TrayAbility.ets      # 挂在状态栏项上的常驻 Ability（STARTUP_HIDE、无窗口；截图链路 + 全局快捷键注册）
+│   │   ├── TrayAbility.ets      # 挂在状态栏项上的常驻 Ability（STARTUP_HIDE、无窗口；截图链路 + 全局快捷键注册/改键）
 │   │   ├── CaptureSignal.ets    # 面板 → 常驻进程的跨进程触发信号（自定义公共事件）
+│   │   ├── HotkeySignal.ets     # 欢迎窗口 → 常驻进程的改键请求与回执（自定义公共事件）
 │   │   └── TrayStatusBarExt.ets # 托盘左键面板的 statusBarView 扩展
 │   └── pages/
+│       ├── Welcome.ets          # 欢迎窗口：名字 + 快捷键介绍/修改 + 对比说明 + Esc 退出
 │       ├── SelectionPage.ets    # 遮罩 + 框选 + 把手 + 放大镜 + 操作条
 │       ├── PastePage.ets        # 贴图内容 + 拖动 + 右键菜单
-│       └── TrayPanel.ets        # 托盘面板：开始截图 / 退出
+│       └── TrayPanel.ets        # 托盘面板：开始截图 / 使用说明 / 退出
 └── resources/                   # 字符串/颜色/图标/profile（托盘与面板图标是 SVG 离屏光栅化出的 PNG）
 ```
 
